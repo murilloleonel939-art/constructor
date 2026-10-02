@@ -524,6 +524,33 @@ function validateMessages(messages) {
   return clean;
 }
 
+// --- Confirmación de commits: el usuario aprueba cada guardar/editar ---
+const pendingConfirms = new Map(); // id -> { done }
+const CONFIRM_TIMEOUT_MS = 2 * 60 * 1000;
+
+// Envía la petición al cliente y espera su respuesta. Sin respuesta, desconexión o timeout = rechazo
+function askConfirm(res, info) {
+  return new Promise((resolve) => {
+    const id = crypto.randomUUID();
+    const done = (approved) => {
+      clearTimeout(timer);
+      pendingConfirms.delete(id);
+      resolve(approved);
+    };
+    const timer = setTimeout(() => done(false), CONFIRM_TIMEOUT_MS);
+    pendingConfirms.set(id, { done });
+    res.once("close", () => done(false));
+    res.write(JSON.stringify({ type: "confirm", id, ...info }) + "\n");
+  });
+}
+
+app.post("/api/confirm", requireAuth, (req, res) => {
+  const entry = typeof req.body?.id === "string" ? pendingConfirms.get(req.body.id) : null;
+  if (!entry) return res.status(404).json({ error: "Confirmación no encontrada o caducada" });
+  entry.done(req.body?.approve === true);
+  res.json({ ok: true });
+});
+
 app.post("/api/chat", requireAuth, async (req, res) => {
   const messages = validateMessages(req.body?.messages);
   if (!messages) return res.status(400).json({ error: "Mensajes no válidos" });
