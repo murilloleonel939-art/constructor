@@ -12,7 +12,7 @@ COPY server.js ./
 COPY public ./public
 
 # Usuario sin privilegios
-USER node
+#USER node
 
 ENV PORT=3000
 EXPOSE 3000
