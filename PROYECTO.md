@@ -36,7 +36,8 @@ App web de chat con Claude, protegida con contraseña, desplegada en Coolify (ht
 
 ## Pendiente
 - (Hecho) Quitada la palabra "html" suelta al inicio de `public/index.html`
-- Mejora posible: aviso en el frontend cuando el historial se acerque al límite
+- (Hecho, sin probar en producción) Aviso en el frontend cuando el historial llega al 80 % de un límite (mensajes, caracteres o imágenes); rojo al 95 %. Función `updateLimitWarning` en `public/index.html`, con botón "Nueva conversación"
+- Por verificar: que la confirmación de commits aparezca en producción (tras desplegar y recargar con Ctrl+F5)
 - (Hecho) Confirmación antes de cada commit: ver "Confirmación de commits" abajo
 
 ## Confirmación de commits
