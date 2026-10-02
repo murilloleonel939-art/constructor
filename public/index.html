@@ -128,7 +128,32 @@ html
     }
     header h1 { margin: 0; font-size: 1.1rem; }
     header .actions { display: flex; gap: 8px; }
+    .badge { font-size: 0.8rem; color: var(--muted); margin-top: 2px; }
     #toggle-list { display: none; }
+
+    /* Panel del proyecto de GitHub */
+    #proj-panel {
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border);
+      background: var(--panel);
+    }
+    #proj-form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+    #proj-form input {
+      font: inherit;
+      padding: 8px 10px;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      background: var(--bg);
+      color: var(--text);
+      min-width: 0;
+    }
+    #proj-repo { flex: 2 1 180px; }
+    #proj-branch { flex: 1 1 90px; }
+    #proj-token { flex: 2 1 220px; }
+    #proj-form button { padding: 8px 14px; }
+    .proj-help { color: var(--muted); font-size: 0.82rem; margin: 8px 0 0; line-height: 1.4; }
+    #proj-msg { margin-top: 6px; }
+
     #messages {
       flex: 1;
       overflow-y: auto;
@@ -225,12 +250,33 @@ html
       <header>
         <div style="display:flex;align-items:center;gap:8px">
           <button id="toggle-list" class="secondary" type="button">☰</button>
-          <h1>Chat con IA</h1>
+          <div>
+            <h1>Chat con IA</h1>
+            <div id="proj-badge" class="badge">Sin proyecto</div>
+          </div>
         </div>
         <div class="actions">
+          <button id="proj-toggle" class="secondary" type="button">🔗 Proyecto</button>
           <button id="logout" class="secondary" type="button">Salir</button>
         </div>
       </header>
+
+      <!-- Panel para vincular esta conversación a un repo de GitHub -->
+      <div id="proj-panel" class="hidden">
+        <form id="proj-form">
+          <input id="proj-repo" type="text" placeholder="dueño/repositorio" autocomplete="off" required />
+          <input id="proj-branch" type="text" placeholder="rama" value="main" autocomplete="off" />
+          <input id="proj-token" type="password" placeholder="Token de GitHub" autocomplete="off" />
+          <button type="submit">Guardar</button>
+          <button id="proj-unlink" class="secondary" type="button">Desvincular</button>
+        </form>
+        <p class="proj-help">
+          Usa un token fine-grained limitado a este repo, con permiso <b>Contents: lectura y escritura</b>.
+          Si ya hay uno guardado, puedes dejar el campo del token vacío para conservarlo.
+        </p>
+        <p id="proj-msg" class="error"></p>
+      </div>
+
       <main id="messages">
         <p class="empty" id="empty">Escribe un mensaje para empezar.</p>
       </main>
@@ -259,6 +305,7 @@ html
     let currentId = crypto.randomUUID();
     let pending = []; // imágenes por enviar: { media_type, data }
     let busy = false;
+    let project = null; // { repo, branch } de la conversación actual
 
     function showLogin() {
       chatView.classList.add("hidden");
@@ -271,6 +318,7 @@ html
       loginView.classList.add("hidden");
       chatView.classList.remove("hidden");
       loadList();
+      loadProject();
       input.focus();
     }
 
@@ -308,6 +356,86 @@ html
       }
       return n;
     }
+
+    // --- Proyecto de GitHub de la conversación ---
+    function renderProject() {
+      $("proj-badge").textContent = project?.repo
+        ? `🔗 ${project.repo} (${project.branch})`
+        : "Sin proyecto";
+    }
+
+    async function loadProject() {
+      const id = currentId;
+      project = null;
+      renderProject();
+      try {
+        const res = await fetch(`/api/conversations/${id}/project`);
+        if (res.status === 401) return showLogin();
+        if (!res.ok || id !== currentId) return;
+        const data = await res.json();
+        project = data.repo ? data : null;
+        renderProject();
+      } catch {}
+    }
+
+    $("proj-toggle").addEventListener("click", () => {
+      const panel = $("proj-panel");
+      panel.classList.toggle("hidden");
+      if (!panel.classList.contains("hidden")) {
+        $("proj-repo").value = project?.repo || "";
+        $("proj-branch").value = project?.branch || "main";
+        $("proj-token").value = "";
+        $("proj-msg").textContent = "";
+        $("proj-repo").focus();
+      }
+    });
+
+    $("proj-form").addEventListener("submit", async (e) => {
+      e.preventDefault();
+      const msg = $("proj-msg");
+      msg.textContent = "Comprobando acceso…";
+      try {
+        const res = await fetch(`/api/conversations/${currentId}/project`, {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            repo: $("proj-repo").value.trim(),
+            branch: $("proj-branch").value.trim() || "main",
+            token: $("proj-token").value.trim(),
+          }),
+        });
+        if (res.status === 401) return showLogin();
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          msg.textContent = data.error || "No se pudo vincular";
+          return;
+        }
+        project = { repo: data.repo, branch: data.branch };
+        renderProject();
+        $("proj-token").value = "";
+        msg.textContent = "✅ Proyecto vinculado";
+      } catch {
+        msg.textContent = "No se pudo conectar con el servidor";
+      }
+    });
+
+    $("proj-unlink").addEventListener("click", async () => {
+      if (!project) {
+        $("proj-msg").textContent = "Esta conversación no tiene proyecto.";
+        return;
+      }
+      if (!confirm("¿Desvincular el proyecto? Se borra el token guardado.")) return;
+      try {
+        await fetch(`/api/conversations/${currentId}/project`, { method: "DELETE" });
+        project = null;
+        renderProject();
+        $("proj-repo").value = "";
+        $("proj-token").value = "";
+        $("proj-msg").textContent = "Proyecto desvinculado";
+      } catch {
+        $("proj-msg").textContent = "No se pudo desvincular";
+      }
+    });
 
     // --- Lista de conversaciones guardadas ---
     async function loadList() {
@@ -356,7 +484,9 @@ html
         messagesEl.innerHTML = "";
         for (const m of history) addBubble(m.role, m.content);
         $("side").classList.remove("open");
+        $("proj-panel").classList.add("hidden");
         loadList();
+        loadProject();
         input.focus();
       } catch {}
     }
@@ -376,7 +506,9 @@ html
       renderPreviews();
       messagesEl.innerHTML = '<p class="empty" id="empty">Escribe un mensaje para empezar.</p>';
       $("side").classList.remove("open");
+      $("proj-panel").classList.add("hidden");
       loadList();
+      loadProject();
       input.focus();
     }
 
@@ -486,31 +618,32 @@ html
     // --- Enviar mensaje y mostrar la respuesta en vivo ---
     $("composer").addEventListener("submit", async (e) => {
       e.preventDefault();
+      if (busy) return;
       const text = input.value.trim();
-      if ((!text && pending.length === 0) || busy) return;
+      if (!text && pending.length === 0) return;
 
       const sentImages = pending;
-      let content = text;
-      if (sentImages.length) {
-        content = sentImages.map((p) => ({
-          type: "image",
-          source: { type: "base64", media_type: p.media_type, data: p.data },
-        }));
-        if (text) content.push({ type: "text", text });
-      }
+      const blocks = sentImages.map((p) => ({
+        type: "image",
+        source: { type: "base64", media_type: p.media_type, data: p.data },
+      }));
+      if (text) blocks.push({ type: "text", text });
+      const content = blocks.length === 1 && blocks[0].type === "text" ? text : blocks;
 
+      history.push({ role: "user", content });
+      const userBubble = addBubble("user", content);
       input.value = "";
       input.style.height = "auto";
       pending = [];
       renderPreviews();
-      addBubble("user", content);
-      history.push({ role: "user", content });
       setBusy(true);
 
       const bubble = addBubble("assistant", "");
       bubble.classList.add("typing");
       let answer = "";
+      let gotDone = false;
       let errorText = "";
+      let unauthorized = false;
 
       try {
         const res = await fetch("/api/chat", {
@@ -518,60 +651,72 @@ html
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ id: currentId, messages: history }),
         });
-
         if (res.status === 401) {
-          history.pop();
-          bubble.remove();
-          setBusy(false);
-          return showLogin();
+          unauthorized = true;
+          throw new Error("Tu sesión expiró. Vuelve a entrar.");
         }
         if (!res.ok) {
-          const data = await res.json().catch(() => ({}));
-          throw new Error(data.error || "Error del servidor");
+          const d = await res.json().catch(() => ({}));
+          throw new Error(d.error || "Error del servidor");
         }
 
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
-        let buffer = "";
+        let buf = "";
+        const handle = (line) => {
+          if (!line.trim()) return;
+          let ev;
+          try { ev = JSON.parse(line); } catch { return; }
+          if (ev.type === "text") {
+            answer += ev.text;
+            bubble.textContent = answer;
+            scrollToBottom();
+          } else if (ev.type === "error") {
+            errorText = ev.error;
+          } else if (ev.type === "done") {
+            gotDone = true;
+          }
+        };
         while (true) {
           const { value, done } = await reader.read();
           if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-          const lines = buffer.split("\n");
-          buffer = lines.pop();
-          for (const line of lines) {
-            if (!line.trim()) continue;
-            const event = JSON.parse(line);
-            if (event.type === "text") {
-              answer += event.text;
-              bubble.textContent = answer;
-              scrollToBottom();
-            } else if (event.type === "error") {
-              errorText = event.error;
-            }
-          }
+          buf += decoder.decode(value, { stream: true });
+          const lines = buf.split("\n");
+          buf = lines.pop();
+          lines.forEach(handle);
         }
+        handle(buf);
       } catch (err) {
-        errorText = err.message || "Error de conexión";
+        errorText = errorText || err.message || "Error al contactar con la IA.";
       }
 
       bubble.classList.remove("typing");
-      if (answer && !errorText) {
+
+      if (gotDone && answer) {
+        // El servidor guardó la conversación: el historial local queda igual que el guardado
         history.push({ role: "assistant", content: answer });
-        loadList();
+        if (errorText) addBubble("error-msg", errorText);
       } else {
-        // Si falló, quitamos el mensaje del historial para poder reintentarlo
-        if (!answer) bubble.remove();
+        // No se guardó en el servidor: deshacer y devolver el mensaje a la caja
         history.pop();
-        addBubble("error-msg", (errorText || "Sin respuesta") + " (tu mensaje no se guardó, puedes reenviarlo)");
+        userBubble.remove();
+        bubble.remove();
         input.value = text;
+        input.style.height = "auto";
+        input.style.height = input.scrollHeight + "px";
         pending = sentImages;
         renderPreviews();
+        addBubble(
+          "error-msg",
+          (errorText || "La IA no devolvió respuesta.") + " Tu mensaje no se guardó, puedes reenviarlo."
+        );
+        if (unauthorized) showLogin();
       }
+
       setBusy(false);
+      loadList();
       input.focus();
     });
   </script>
 </body>
 </html>
-     
