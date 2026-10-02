@@ -588,7 +588,9 @@ app.post("/api/chat", requireAuth, async (req, res) => {
   if (!messages) return res.status(400).json({ error: "Mensajes no válidos" });
   const convId = ID_RE.test(req.body?.id) ? req.body.id : null;
   // Solo se aceptan modelos de la lista permitida
-  const model = MODEL_IDS.includes(req.body?.model) ? req.body.model : MODEL;
+  const requestedModel = req.body?.model;
+  const model = MODEL_IDS.includes(requestedModel) ? requestedModel : MODEL;
+  console.log(`[/api/chat] Modelos disponibles: ${MODEL_IDS.join(", ")}. Solicitado: "${requestedModel}". Usando: "${model}"`);
 
   // Proyecto de GitHub vinculado (si existe)
   const project = await loadProject(convId);
