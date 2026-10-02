@@ -27,7 +27,7 @@ Página web con un chat para hablar con Claude (Anthropic), protegida con contra
 3. En **Build Pack** selecciona **Dockerfile**.
 4. En **Ports Exposes** pon `3000`.
 5. En **Environment Variables** añade `ANTHROPIC_API_KEY` y `APP_PASSWORD`.
-6. En **Storages** añade un volumen persistente con destino `/data/conversations`.
+6. En **Persistent Storage** añade un volumen con destino `/data`.
    Sin este paso, las conversaciones se borran en cada redeploy.
 7. Asigna un dominio (Coolify activa HTTPS automáticamente) y pulsa **Deploy**.
 
@@ -38,7 +38,7 @@ docker build -t chat-ia .
 docker run -p 3000:3000 \
   -e ANTHROPIC_API_KEY=tu_clave \
   -e APP_PASSWORD=tu_contraseña \
-  -v chat-data:/data/conversations \
+  -v chat-data:/data \
   chat-ia
 ```
 
@@ -48,4 +48,5 @@ Luego abre http://localhost:3000
 
 - Si cambias `APP_PASSWORD`, todas las sesiones abiertas se cierran.
 - Las conversaciones las ve cualquiera que conozca la contraseña: no hay usuarios separados.
+- El contenedor corre como root. Si activas `USER node` en el Dockerfile, asegúrate de que el volumen `/data` tenga permisos de escritura para ese usuario.
 ````
