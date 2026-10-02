@@ -569,6 +569,8 @@ app.post("/api/chat", requireAuth, async (req, res) => {
       "Cuando hagas cambios importantes, actualiza PROYECTO.md con el contexto y las decisiones."
     : SYSTEM_PROMPT;
   const ctx = { usedWeb: false };
+  // Solo se pide confirmación si el cliente la soporta (así los clientes antiguos no se quedan esperando)
+  const canConfirm = req.body?.canConfirm === true;
 
   // Respuesta en vivo: una línea JSON por cada trozo de texto
   res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
