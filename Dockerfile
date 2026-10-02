@@ -1,5 +1,4 @@
-dockerfile
-#FROM node:22-alpine
+FROM node:22-alpine
 
 WORKDIR /app
 ENV NODE_ENV=production
@@ -12,7 +11,7 @@ RUN npm install --omit=dev && npm cache clean --force
 COPY server.js ./
 COPY public ./public
 
-# Carpeta de conversaciones (en Coolify se monta un volumen aquí)
+# Carpeta de conversaciones (en Coolify se monta un volumen en /data)
 ENV DATA_DIR=/data/conversations
 RUN mkdir -p /data/conversations
 
