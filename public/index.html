@@ -741,7 +741,7 @@
         const res = await fetch("/api/chat", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ id: currentId, messages: history }),
+          body: JSON.stringify({ id: currentId, messages: history, canConfirm: true }),
         });
         if (res.status === 401) {
           unauthorized = true;
