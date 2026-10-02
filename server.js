@@ -22,16 +22,13 @@ const MODEL_IDS = [
 // Configuración propia de cada modelo
 function modelParams(model) {
   if (model === MODEL) {
-    // Modelo por defecto (sonnet): usa effort bajo y fallback automático
+    // Modelo por defecto (sonnet): usa effort bajo
     return {
       max_tokens: 64000,
       output_config: { effort: "low" },
-      // Si el filtro de seguridad rechaza la petición, Anthropic la reintenta con otro modelo
-      betas: ["server-side-fallback-2026-07-01"],
-      fallbacks: "default",
     };
   }
-  // Otros modelos (ej: haiku): sin fallback, sin betas especiales
+  // Otros modelos (ej: haiku): configuración mínima, sin betas especiales
   return { max_tokens: 16000 };
 }
 
