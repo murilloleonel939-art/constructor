@@ -50,12 +50,25 @@ function titleOf(messages) {
   return (t || "Conversación").slice(0, 60);
 }
 
-async function saveConversation(id, messages, answer) {
+// messages = lo que muestra la interfaz; history = lo que ve el modelo (con herramientas)
+async function saveConversation(id, messages, answer, history) {
   const full = [...messages, { role: "assistant", content: answer }];
   await fs.writeFile(
     fileOf(id),
-    JSON.stringify({ id, title: titleOf(full), updatedAt: Date.now(), messages: full })
+    JSON.stringify({ id, title: titleOf(full), updatedAt: Date.now(), messages: full, history })
   );
+}
+
+// Si hay historial con herramientas guardado y coincide con lo que manda el cliente, lo usa
+async function loadHistory(id, messages) {
+  if (!id) return [...messages];
+  try {
+    const saved = JSON.parse(await fs.readFile(fileOf(id), "utf8"));
+    if (saved.history && saved.messages?.length === messages.length - 1) {
+      return [...saved.history, messages.at(-1)];
+    }
+  } catch {}
+  return [...messages];
 }
 
 // --- Herramienta para leer URLs ---
@@ -286,9 +299,11 @@ app.post("/api/chat", requireAuth, async (req, res) => {
   res.setHeader("X-Accel-Buffering", "no");
   const send = (obj) => res.write(JSON.stringify(obj) + "\n");
 
-  const convo = [...messages]; // conversación de trabajo (incluye resultados de herramientas)
+  // Conversación de trabajo (incluye resultados de herramientas de vueltas anteriores)
+  const convo = await loadHistory(convId, messages);
   let currentStream = null;
   let answer = "";
+  let finished = false;
 
   res.on("close", () => {
     if (!res.writableEnded) currentStream?.abort();
@@ -297,6 +312,12 @@ app.post("/api/chat", requireAuth, async (req, res) => {
   try {
     // Bucle de herramientas (máximo 5 vueltas)
     for (let turn = 0; turn < 5; turn++) {
+      // Separa el texto de vueltas distintas
+      if (turn > 0 && answer && !answer.endsWith("\n")) {
+        answer += "\n\n";
+        send({ type: "text", text: "\n\n" });
+      }
+
       const stream = client.beta.messages.stream({
         model: MODEL,
         max_tokens: 64000,
@@ -331,6 +352,9 @@ app.post("/api/chat", requireAuth, async (req, res) => {
         continue; // vuelve a llamar al modelo con el resultado
       }
 
+      convo.push({ role: "assistant", content: final.content });
+      finished = true;
+
       if (final.stop_reason === "refusal") {
         send({ type: "error", error: "La IA no puede responder a esta petición." });
       } else if (final.stop_reason === "max_tokens") {
@@ -338,7 +362,17 @@ app.post("/api/chat", requireAuth, async (req, res) => {
       }
       break;
     }
-    if (convId && answer) await saveConversation(convId, messages, answer);
+
+    if (!finished) {
+      send({
+        type: "error",
+        error: "Se alcanzó el límite de lecturas de páginas. La respuesta puede estar incompleta.",
+      });
+    }
+    if (convId && answer) {
+      // Si no terminó, convo acaba en un mensaje de usuario: no se guarda history
+      await saveConversation(convId, messages, answer, finished ? convo : undefined);
+    }
     send({ type: "done" });
   } catch (err) {
     if (err instanceof Anthropic.APIUserAbortError) return;
