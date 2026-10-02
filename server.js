@@ -628,13 +628,9 @@ app.post("/api/chat", requireAuth, async (req, res) => {
       }
 
       const stream = client.beta.messages.stream({
-        model: MODEL,
-        max_tokens: 64000,
+        model,
+        ...modelParams(model),
         system,
-        output_config: { effort: "low" },
-        // Si el filtro de seguridad rechaza la petición, Anthropic la reintenta con otro modelo
-        betas: ["server-side-fallback-2026-07-01"],
-        fallbacks: "default",
         tools,
         messages: convo,
       });
