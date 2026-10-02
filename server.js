@@ -19,10 +19,10 @@ const MODEL_IDS = [
       .filter(Boolean),
   ]),
 ];
-// Configuración propia de cada modelo: el modelo por defecto usa effort y el fallback beta;
-// los demás usan una llamada básica que todos los modelos aceptan
+// Configuración propia de cada modelo
 function modelParams(model) {
   if (model === MODEL) {
+    // Modelo por defecto (sonnet): usa effort bajo y fallback automático
     return {
       max_tokens: 64000,
       output_config: { effort: "low" },
@@ -31,6 +31,7 @@ function modelParams(model) {
       fallbacks: "default",
     };
   }
+  // Otros modelos (ej: haiku): sin fallback, sin betas especiales
   return { max_tokens: 16000 };
 }
 
