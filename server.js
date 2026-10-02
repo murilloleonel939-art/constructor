@@ -9,6 +9,30 @@ import Anthropic from "@anthropic-ai/sdk";
 const PORT = Number(process.env.PORT) || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD;
 const MODEL = process.env.MODEL || "claude-sonnet-5-5";
+// Modelos seleccionables en la interfaz: MODEL (por defecto) + los de MODELS (separados por comas)
+const MODEL_IDS = [
+  ...new Set([
+    MODEL,
+    ...(process.env.MODELS || "claude-haiku-4-5-20251001")
+      .split(",")
+      .map((s) => s.trim())
+      .filter(Boolean),
+  ]),
+];
+// Configuración propia de cada modelo: el modelo por defecto usa effort y el fallback beta;
+// los demás usan una llamada básica que todos los modelos aceptan
+function modelParams(model) {
+  if (model === MODEL) {
+    return {
+      max_tokens: 64000,
+      output_config: { effort: "low" },
+      // Si el filtro de seguridad rechaza la petición, Anthropic la reintenta con otro modelo
+      betas: ["server-side-fallback-2026-07-01"],
+      fallbacks: "default",
+    };
+  }
+  return { max_tokens: 16000 };
+}
 
 if (!process.env.ANTHROPIC_API_KEY) {
   console.error("Falta la variable ANTHROPIC_API_KEY");
