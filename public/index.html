@@ -368,13 +368,17 @@
           opt.textContent = m;
           sel.appendChild(opt);
         }
-        model = data.models.includes(model) ? model : data.default;
+        // Restaurar el modelo guardado en localStorage, o usar el del servidor
+        const saved = localStorage.getItem("model");
+        model = data.models.includes(saved) ? saved : data.default;
         sel.value = model;
+        localStorage.setItem("model", model);
       } catch {}
     }
     $("model-select").addEventListener("change", (e) => {
       model = e.target.value;
       localStorage.setItem("model", model);
+      console.log("Modelo seleccionado:", model);
     });
 
     function showLogin() {
