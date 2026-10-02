@@ -392,6 +392,10 @@ app.get("/api/session", (req, res) => {
   res.json({ authenticated: isValidToken(getCookie(req, COOKIE_NAME)) });
 });
 
+app.get("/api/models", requireAuth, (req, res) => {
+  res.json({ models: MODEL_IDS, default: MODEL });
+});
+
 app.post("/api/login", (req, res) => {
   const ip = req.ip;
   if (tooManyAttempts(ip)) {
