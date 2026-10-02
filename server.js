@@ -1,5 +1,6 @@
-s
+js
 import crypto from "node:crypto";
+import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
@@ -28,7 +29,7 @@ const SESSION_DAYS = 7;
 const MAX_MESSAGES = 100; // límite de mensajes de historial por petición
 const MAX_CHARS = 200_000; // límite total de caracteres del historial
 
-// NUEVO: límites de imágenes
+// Límites de imágenes
 const MAX_IMAGES = 5; // imágenes máximas por petición
 const MAX_IMAGE_B64 = 7_000_000; // ~5 MB por imagen (en base64)
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
@@ -36,9 +37,29 @@ const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 const client = new Anthropic(); // lee ANTHROPIC_API_KEY automáticamente
 const app = express();
 app.set("trust proxy", true); // Coolify pone un proxy delante
-app.use(express.json({ limit: "25mb" })); // NUEVO: antes era 1mb
+app.use(express.json({ limit: "25mb" }));
 
-// --- NUEVO: herramienta para leer URLs ---
+// --- Guardado de conversaciones (archivos JSON en el volumen) ---
+const DATA_DIR = process.env.DATA_DIR || "/data/conversations";
+await fs.mkdir(DATA_DIR, { recursive: true });
+const ID_RE = /^[0-9a-f-]{36}$/;
+const fileOf = (id) => path.join(DATA_DIR, id + ".json");
+
+function titleOf(messages) {
+  const c = messages[0]?.content;
+  const t = typeof c === "string" ? c : c?.find((b) => b.type === "text")?.text;
+  return (t || "Conversación").slice(0, 60);
+}
+
+async function saveConversation(id, messages, answer) {
+  const full = [...messages, { role: "assistant", content: answer }];
+  await fs.writeFile(
+    fileOf(id),
+    JSON.stringify({ id, title: titleOf(full), updatedAt: Date.now(), messages: full })
+  );
+}
+
+// --- Herramienta para leer URLs ---
 const TOOLS = [
   {
     name: "leer_url",
@@ -175,7 +196,36 @@ app.post("/api/logout", (req, res) => {
   res.json({ ok: true });
 });
 
-// NUEVO: acepta texto (string) o una lista de bloques de texto e imagen
+// --- Conversaciones guardadas ---
+app.get("/api/conversations", requireAuth, async (req, res) => {
+  const list = [];
+  for (const f of await fs.readdir(DATA_DIR)) {
+    if (!f.endsWith(".json")) continue;
+    try {
+      const { id, title, updatedAt } = JSON.parse(await fs.readFile(path.join(DATA_DIR, f), "utf8"));
+      list.push({ id, title, updatedAt });
+    } catch {}
+  }
+  list.sort((a, b) => b.updatedAt - a.updatedAt);
+  res.json(list);
+});
+
+app.get("/api/conversations/:id", requireAuth, async (req, res) => {
+  if (!ID_RE.test(req.params.id)) return res.status(400).json({ error: "ID no válido" });
+  try {
+    res.json(JSON.parse(await fs.readFile(fileOf(req.params.id), "utf8")));
+  } catch {
+    res.status(404).json({ error: "No encontrada" });
+  }
+});
+
+app.delete("/api/conversations/:id", requireAuth, async (req, res) => {
+  if (!ID_RE.test(req.params.id)) return res.status(400).json({ error: "ID no válido" });
+  await fs.rm(fileOf(req.params.id), { force: true });
+  res.json({ ok: true });
+});
+
+// Acepta texto (string) o una lista de bloques de texto e imagen
 function validateMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) return null;
   if (messages.length > MAX_MESSAGES) return null;
@@ -229,6 +279,7 @@ function validateMessages(messages) {
 app.post("/api/chat", requireAuth, async (req, res) => {
   const messages = validateMessages(req.body?.messages);
   if (!messages) return res.status(400).json({ error: "Mensajes no válidos" });
+  const convId = ID_RE.test(req.body?.id) ? req.body.id : null;
 
   // Respuesta en vivo: una línea JSON por cada trozo de texto
   res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
@@ -236,15 +287,16 @@ app.post("/api/chat", requireAuth, async (req, res) => {
   res.setHeader("X-Accel-Buffering", "no");
   const send = (obj) => res.write(JSON.stringify(obj) + "\n");
 
-  const convo = [...messages]; // NUEVO: conversación de trabajo (incluye resultados de herramientas)
+  const convo = [...messages]; // conversación de trabajo (incluye resultados de herramientas)
   let currentStream = null;
+  let answer = "";
 
   res.on("close", () => {
     if (!res.writableEnded) currentStream?.abort();
   });
 
   try {
-    // NUEVO: bucle de herramientas (máximo 5 vueltas)
+    // Bucle de herramientas (máximo 5 vueltas)
     for (let turn = 0; turn < 5; turn++) {
       const stream = client.beta.messages.stream({
         model: MODEL,
@@ -258,7 +310,10 @@ app.post("/api/chat", requireAuth, async (req, res) => {
         messages: convo,
       });
       currentStream = stream;
-      stream.on("text", (text) => send({ type: "text", text }));
+      stream.on("text", (text) => {
+        answer += text;
+        send({ type: "text", text });
+      });
       const final = await stream.finalMessage();
 
       if (final.stop_reason === "tool_use") {
@@ -284,6 +339,7 @@ app.post("/api/chat", requireAuth, async (req, res) => {
       }
       break;
     }
+    if (convId && answer) await saveConversation(convId, messages, answer);
     send({ type: "done" });
   } catch (err) {
     if (err instanceof Anthropic.APIUserAbortError) return;
