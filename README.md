@@ -1,6 +1,14 @@
+markdown
 # Chat con IA
 
 Página web con un chat para hablar con Claude (Anthropic), protegida con contraseña.
+
+## Funciones
+
+- Respuestas en tiempo real (streaming).
+- Envío de imágenes (hasta 5 por mensaje, JPEG, PNG, GIF o WebP).
+- Lectura de páginas web: el asistente puede leer una URL que le des.
+- Conversaciones guardadas en el servidor, que se pueden abrir y borrar.
 
 ## Variables de entorno
 
@@ -10,6 +18,7 @@ Página web con un chat para hablar con Claude (Anthropic), protegida con contra
 | `APP_PASSWORD` | Sí | La contraseña para entrar al chat |
 | `MODEL` | No | Modelo a usar (por defecto `claude-sonnet-5-5`) |
 | `PORT` | No | Puerto del servidor (por defecto `3000`) |
+| `DATA_DIR` | No | Carpeta donde se guardan las conversaciones (por defecto `/data/conversations`) |
 
 ## Desplegar en Coolify
 
@@ -18,19 +27,25 @@ Página web con un chat para hablar con Claude (Anthropic), protegida con contra
 3. En **Build Pack** selecciona **Dockerfile**.
 4. En **Ports Exposes** pon `3000`.
 5. En **Environment Variables** añade `ANTHROPIC_API_KEY` y `APP_PASSWORD`.
-6. Asigna un dominio (Coolify activa HTTPS automáticamente) y pulsa **Deploy**.
+6. En **Storages** añade un volumen persistente con destino `/data/conversations`.
+   Sin este paso, las conversaciones se borran en cada redeploy.
+7. Asigna un dominio (Coolify activa HTTPS automáticamente) y pulsa **Deploy**.
 
 ## Probar en tu ordenador (con Docker)
 
 ```bash
 docker build -t chat-ia .
-docker run -p 3000:3000 -e ANTHROPIC_API_KEY=tu_clave -e APP_PASSWORD=tu_contraseña chat-ia
+docker run -p 3000:3000 \
+  -e ANTHROPIC_API_KEY=tu_clave \
+  -e APP_PASSWORD=tu_contraseña \
+  -v chat-data:/data/conversations \
+  chat-ia
 ```
 
 Luego abre http://localhost:3000
 
 ## Notas
 
-- La conversación se guarda solo en la pestaña del navegador: al recargar empieza de cero.
-- La sesión dura 7 días. Si cambias `APP_PASSWORD`, todos tendrán que volver a entrar.
-- Tras 10 contraseñas incorrectas en 15 minutos desde la misma IP, se bloquea temporalmente.
+- Si cambias `APP_PASSWORD`, todas las sesiones abiertas se cierran.
+- Las conversaciones las ve cualquiera que conozca la contraseña: no hay usuarios separados.
+````
