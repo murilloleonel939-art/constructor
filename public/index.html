@@ -560,6 +560,46 @@
       busy = value;
       sendBtn.disabled = value;
       $("new-chat").disabled = value;
+      updateLimitWarning();
+    }
+
+    // --- Aviso cuando el historial se acerca a los límites del servidor ---
+    // Es una estimación: el servidor cuenta lo mismo que ve el navegador (mensajes, caracteres, imágenes)
+    function updateLimitWarning() {
+      const MAX_MSGS = 100;
+      const MAX_CHARS = 200000;
+      const box = $("limit-warn");
+      let chars = 0;
+      for (const m of history) {
+        if (typeof m.content === "string") {
+          chars += m.content.length;
+        } else if (Array.isArray(m.content)) {
+          for (const b of m.content) if (b.type === "text") chars += b.text.length;
+        }
+      }
+      const imgs = countImages(history) + pending.length;
+      const ratio = Math.max(history.length / MAX_MSGS, chars / MAX_CHARS, imgs / MAX_IMAGES);
+
+      if (ratio < 0.8) {
+        box.classList.add("hidden");
+        return;
+      }
+      box.classList.remove("hidden");
+      box.classList.toggle("danger", ratio >= 0.95);
+      box.innerHTML = "";
+      const txt = document.createElement("span");
+      txt.textContent =
+        `${ratio >= 0.95 ? "🚫 Límite casi alcanzado" : "⚠️ Conversación larga"}: ` +
+        `${history.length}/${MAX_MSGS} mensajes · ${chars.toLocaleString("es")}/${MAX_CHARS.toLocaleString("es")} caracteres · ` +
+        `${imgs}/${MAX_IMAGES} imágenes. Conviene abrir una nueva.`;
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "secondary";
+      btn.textContent = "Nueva conversación";
+      btn.addEventListener("click", () => {
+        if (!busy) resetChat();
+      });
+      box.append(txt, btn);
     }
 
     // --- Imágenes ---
