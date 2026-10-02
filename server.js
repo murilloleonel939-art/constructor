@@ -630,7 +630,23 @@ app.post("/api/chat", requireAuth, async (req, res) => {
           if (block.name === "leer_url") {
             content = await leerUrl(block.input?.url);
           } else if (project && block.name.startsWith("github_")) {
-            content = await runGithubTool(block.name, block.input, project, ctx);
+            const writes = block.name === "github_guardar" || block.name === "github_editar";
+            let approved = true;
+            if (writes && canConfirm && !ctx.usedWeb) {
+              const i = block.input || {};
+              const cut = (s) => (typeof s === "string" ? s.slice(0, 3000) : "");
+              approved = await askConfirm(res, {
+                tool: block.name,
+                path: cut(i.path),
+                commit: cut(i.message),
+                buscar: cut(i.buscar),
+                reemplazar: cut(i.reemplazar),
+                content: cut(i.content),
+              });
+            }
+            content = approved
+              ? await runGithubTool(block.name, block.input, project, ctx)
+              : "El usuario rechazó este cambio (o no respondió a tiempo). No lo reintentes sin que lo pida.";
           } else {
             content = "Herramienta no disponible";
           }
