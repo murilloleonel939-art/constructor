@@ -48,4 +48,5 @@ App web de chat con Claude, protegida con contraseña, desplegada en Coolify (ht
 - Limitación: la tarjeta se añade al final del chat, así que el texto que la IA escriba después aparece en la burbuja anterior
 
 <!-- si funciona -->
+<!-- prueba de confirmación -->
 
