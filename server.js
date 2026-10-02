@@ -45,7 +45,7 @@ const ID_RE = /^[0-9a-f-]{36}\$/;
 const fileOf = (id) => path.join(DATA_DIR, id + ".json");
 
 function titleOf(messages) {
-  const c = messages[0]?.content;
+  const c = messages?.content;
   const t = typeof c === "string" ? c : c?.find((b) => b.type === "text")?.text;
   return (t || "Conversación").slice(0, 60);
 }
@@ -223,7 +223,6 @@ async function leerUrl(url) {
     const r = await fetch(url, { signal: AbortSignal.timeout(15_000) });
     if (!r.ok) return `Error ${r.status} al leer la URL`;
     const text = await r.text();
-    // Limpieza básica de HTML
     const clean = text
       .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
       .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
@@ -238,6 +237,11 @@ async function leerUrl(url) {
 
 // --- Rutas del Servidor ---
 app.use(express.static(path.join(path.dirname(fileURLToPath(import.meta.url)), "public")));
+
+// Endpoint de verificación requerido por Coolify (Healthcheck)
+app.get("/", (req, res) => {
+  res.send("Servidor OK");
+});
 
 // Endpoint de Login para validar la contraseña de la app
 app.post("/api/login", (req, res) => {
@@ -261,3 +265,6 @@ function auth(req, res, next) {
 app.listen(PORT, () => {
   console.log(`Servidor corriendo en http://localhost:${PORT}`);
 });
+
+
+
