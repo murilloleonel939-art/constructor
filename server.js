@@ -1,3 +1,4 @@
+s
 import crypto from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,10 +28,44 @@ const SESSION_DAYS = 7;
 const MAX_MESSAGES = 100; // límite de mensajes de historial por petición
 const MAX_CHARS = 200_000; // límite total de caracteres del historial
 
+// NUEVO: límites de imágenes
+const MAX_IMAGES = 5; // imágenes máximas por petición
+const MAX_IMAGE_B64 = 7_000_000; // ~5 MB por imagen (en base64)
+const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
+
 const client = new Anthropic(); // lee ANTHROPIC_API_KEY automáticamente
 const app = express();
 app.set("trust proxy", true); // Coolify pone un proxy delante
-app.use(express.json({ limit: "1mb" }));
+app.use(express.json({ limit: "25mb" })); // NUEVO: antes era 1mb
+
+// --- NUEVO: herramienta para leer URLs ---
+const TOOLS = [
+  {
+    name: "leer_url",
+    description: "Descarga y lee el texto de una página web a partir de su URL.",
+    input_schema: {
+      type: "object",
+      properties: {
+        url: { type: "string", description: "URL completa, con http:// o https://" },
+      },
+      required: ["url"],
+    },
+  },
+];
+
+async function leerUrl(url) {
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return "URL no válida";
+  try {
+    // Jina Reader descarga la página por nosotros (así tu servidor no accede a redes internas)
+    const r = await fetch("https://r.jina.ai/" + url, {
+      signal: AbortSignal.timeout(30_000),
+    });
+    const text = await r.text();
+    return text.slice(0, 15000) || "La página no devolvió contenido";
+  } catch (e) {
+    return "Error al leer la URL: " + e.message;
+  }
+}
 
 // --- Sesión: cookie firmada con la contraseña (si cambias la contraseña, todos salen) ---
 const signingKey = crypto.createHash("sha256").update("session:" + APP_PASSWORD).digest();
@@ -140,20 +175,54 @@ app.post("/api/logout", (req, res) => {
   res.json({ ok: true });
 });
 
+// NUEVO: acepta texto (string) o una lista de bloques de texto e imagen
 function validateMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) return null;
   if (messages.length > MAX_MESSAGES) return null;
   let total = 0;
+  let images = 0;
   const clean = [];
   for (const [i, m] of messages.entries()) {
     const expectedRole = i % 2 === 0 ? "user" : "assistant";
-    if (m?.role !== expectedRole || typeof m.content !== "string") return null;
-    const content = m.content.trim();
-    if (!content) return null;
-    total += content.length;
-    clean.push({ role: m.role, content });
+    if (m?.role !== expectedRole) return null;
+
+    if (typeof m.content === "string") {
+      const content = m.content.trim();
+      if (!content) return null;
+      total += content.length;
+      clean.push({ role: m.role, content });
+      continue;
+    }
+
+    // Bloques (solo el usuario puede mandar imágenes)
+    if (m.role !== "user" || !Array.isArray(m.content) || m.content.length === 0) return null;
+    const blocks = [];
+    for (const b of m.content) {
+      if (b?.type === "text" && typeof b.text === "string") {
+        const text = b.text.trim();
+        if (!text) continue;
+        total += text.length;
+        blocks.push({ type: "text", text });
+      } else if (
+        b?.type === "image" &&
+        b.source?.type === "base64" &&
+        IMAGE_TYPES.includes(b.source.media_type) &&
+        typeof b.source.data === "string" &&
+        b.source.data.length <= MAX_IMAGE_B64
+      ) {
+        images++;
+        blocks.push({
+          type: "image",
+          source: { type: "base64", media_type: b.source.media_type, data: b.source.data },
+        });
+      } else {
+        return null;
+      }
+    }
+    if (blocks.length === 0) return null;
+    clean.push({ role: m.role, content: blocks });
   }
-  if (total > MAX_CHARS || clean.at(-1).role !== "user") return null;
+  if (images > MAX_IMAGES || total > MAX_CHARS || clean.at(-1).role !== "user") return null;
   return clean;
 }
 
@@ -167,28 +236,53 @@ app.post("/api/chat", requireAuth, async (req, res) => {
   res.setHeader("X-Accel-Buffering", "no");
   const send = (obj) => res.write(JSON.stringify(obj) + "\n");
 
-  const stream = client.beta.messages.stream({
-    model: MODEL,
-    max_tokens: 64000,
-    system: SYSTEM_PROMPT,
-    output_config: { effort: "low" },
-    // Si el filtro de seguridad rechaza la petición, Anthropic la reintenta con otro modelo
-    betas: ["server-side-fallback-2026-07-01"],
-    fallbacks: "default",
-    messages,
-  });
+  const convo = [...messages]; // NUEVO: conversación de trabajo (incluye resultados de herramientas)
+  let currentStream = null;
 
   res.on("close", () => {
-    if (!res.writableEnded) stream.abort();
+    if (!res.writableEnded) currentStream?.abort();
   });
 
   try {
-    stream.on("text", (text) => send({ type: "text", text }));
-    const final = await stream.finalMessage();
-    if (final.stop_reason === "refusal") {
-      send({ type: "error", error: "La IA no puede responder a esta petición." });
-    } else if (final.stop_reason === "max_tokens") {
-      send({ type: "error", error: "La respuesta se cortó por ser demasiado larga." });
+    // NUEVO: bucle de herramientas (máximo 5 vueltas)
+    for (let turn = 0; turn < 5; turn++) {
+      const stream = client.beta.messages.stream({
+        model: MODEL,
+        max_tokens: 64000,
+        system: SYSTEM_PROMPT,
+        output_config: { effort: "low" },
+        // Si el filtro de seguridad rechaza la petición, Anthropic la reintenta con otro modelo
+        betas: ["server-side-fallback-2026-07-01"],
+        fallbacks: "default",
+        tools: TOOLS,
+        messages: convo,
+      });
+      currentStream = stream;
+      stream.on("text", (text) => send({ type: "text", text }));
+      const final = await stream.finalMessage();
+
+      if (final.stop_reason === "tool_use") {
+        convo.push({ role: "assistant", content: final.content });
+        const results = [];
+        for (const block of final.content) {
+          if (block.type === "tool_use") {
+            results.push({
+              type: "tool_result",
+              tool_use_id: block.id,
+              content: await leerUrl(block.input?.url),
+            });
+          }
+        }
+        convo.push({ role: "user", content: results });
+        continue; // vuelve a llamar al modelo con el resultado
+      }
+
+      if (final.stop_reason === "refusal") {
+        send({ type: "error", error: "La IA no puede responder a esta petición." });
+      } else if (final.stop_reason === "max_tokens") {
+        send({ type: "error", error: "La respuesta se cortó por ser demasiado larga." });
+      }
+      break;
     }
     send({ type: "done" });
   } catch (err) {
