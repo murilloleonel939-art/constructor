@@ -763,6 +763,8 @@
             answer += ev.text;
             bubble.textContent = answer;
             scrollToBottom();
+          } else if (ev.type === "confirm") {
+            showConfirm(ev);
           } else if (ev.type === "error") {
             errorText = ev.error;
           } else if (ev.type === "done") {
