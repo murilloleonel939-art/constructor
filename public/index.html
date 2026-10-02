@@ -604,6 +604,7 @@
 
     // --- Imágenes ---
     function renderPreviews() {
+      updateLimitWarning();
       const box = $("previews");
       box.innerHTML = "";
       box.classList.toggle("hidden", pending.length === 0);
