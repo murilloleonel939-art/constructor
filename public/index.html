@@ -387,6 +387,7 @@
     function showChat() {
       loginView.classList.add("hidden");
       chatView.classList.remove("hidden");
+      loadModels();
       loadList();
       loadProject();
       input.focus();
