@@ -351,6 +351,31 @@
     let pending = []; // imágenes por enviar: { media_type, data }
     let busy = false;
     let project = null; // { repo, branch } de la conversación actual
+    let model = localStorage.getItem("model") || ""; // modelo elegido (vacío = el del servidor)
+
+    // --- Selector de modelo ---
+    async function loadModels() {
+      try {
+        const res = await fetch("/api/models");
+        if (res.status === 401) return showLogin();
+        if (!res.ok) return;
+        const data = await res.json();
+        const sel = $("model-select");
+        sel.innerHTML = "";
+        for (const m of data.models) {
+          const opt = document.createElement("option");
+          opt.value = m;
+          opt.textContent = m;
+          sel.appendChild(opt);
+        }
+        model = data.models.includes(model) ? model : data.default;
+        sel.value = model;
+      } catch {}
+    }
+    $("model-select").addEventListener("change", (e) => {
+      model = e.target.value;
+      localStorage.setItem("model", model);
+    });
 
     function showLogin() {
       chatView.classList.add("hidden");
