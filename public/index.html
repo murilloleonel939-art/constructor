@@ -641,6 +641,72 @@
       }
     });
 
+    // --- Confirmación de commits: tarjeta para aprobar o rechazar lo que quiere hacer la IA ---
+    function showConfirm(ev) {
+      const card = document.createElement("div");
+      card.className = "confirm-card";
+
+      const title = document.createElement("strong");
+      title.textContent = (ev.tool === "github_editar" ? "✏️ Editar " : "💾 Guardar ") + (ev.path || "");
+      const commit = document.createElement("div");
+      commit.className = "confirm-commit";
+      commit.textContent = "Commit: " + (ev.commit || "");
+      card.append(title, commit);
+
+      const addBlock = (label, text) => {
+        if (!text) return;
+        const l = document.createElement("div");
+        l.className = "confirm-label";
+        l.textContent = label;
+        const pre = document.createElement("pre");
+        pre.textContent = text;
+        card.append(l, pre);
+      };
+      if (ev.tool === "github_editar") {
+        addBlock("Reemplaza:", ev.buscar);
+        addBlock("Por:", ev.reemplazar);
+      } else {
+        addBlock("Contenido (primeros 3000 caracteres):", ev.content);
+      }
+
+      const actions = document.createElement("div");
+      actions.className = "confirm-actions";
+      const ok = document.createElement("button");
+      ok.type = "button";
+      ok.textContent = "Aprobar";
+      const no = document.createElement("button");
+      no.type = "button";
+      no.className = "secondary";
+      no.textContent = "Rechazar";
+      const status = document.createElement("span");
+      status.className = "confirm-status";
+      actions.append(ok, no, status);
+      card.appendChild(actions);
+
+      const respond = async (approve) => {
+        ok.disabled = true;
+        no.disabled = true;
+        try {
+          const res = await fetch("/api/confirm", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ id: ev.id, approve }),
+          });
+          if (res.status === 401) return showLogin();
+          status.textContent = res.ok
+            ? approve ? "✅ Aprobado" : "❌ Rechazado"
+            : "⚠️ La solicitud ya caducó";
+        } catch {
+          status.textContent = "⚠️ No se pudo enviar la respuesta";
+        }
+      };
+      ok.addEventListener("click", () => respond(true));
+      no.addEventListener("click", () => respond(false));
+
+      messagesEl.appendChild(card);
+      scrollToBottom();
+    }
+
     // --- Enviar mensaje y mostrar la respuesta en vivo ---
     $("composer").addEventListener("submit", async (e) => {
       e.preventDefault();
