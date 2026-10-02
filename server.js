@@ -575,6 +575,10 @@ app.post("/api/confirm", requireAuth, (req, res) => {
   res.json({ ok: true });
 });
 
+app.get("/api/models", requireAuth, (req, res) => {
+  res.json({ models: MODEL_IDS, default: MODEL });
+});
+
 app.post("/api/chat", requireAuth, async (req, res) => {
   const messages = validateMessages(req.body?.messages);
   if (!messages) return res.status(400).json({ error: "Mensajes no válidos" });
