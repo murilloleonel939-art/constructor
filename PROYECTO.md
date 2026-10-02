@@ -45,3 +45,6 @@ App web de chat con Claude, protegida con contraseña, desplegada en Coolify (ht
 - Rechazo = botón Rechazar, 2 minutos sin respuesta o desconexión; la IA recibe un aviso de que no reintente
 - Solo se pide si el cliente envía `canConfirm: true` en `/api/chat`; no se pide si la petición ya leyó una web (el commit se bloquea de todos modos)
 - Limitación: la tarjeta se añade al final del chat, así que el texto que la IA escriba después aparece en la burbuja anterior
+
+<!-- si funciona -->
+
