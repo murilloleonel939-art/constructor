@@ -11,7 +11,7 @@ App web de chat con Claude, protegida con contraseña, desplegada en Coolify (ht
 - Respuesta en streaming (NDJSON) desde `/api/chat`
 
 ## Archivos
-- `server.js` (~24 KB): servidor, API, herramientas y bucle de herramientas (máx. 5 vueltas)
+- `server.js` (~24 KB): servidor, API, herramientas y bucle de herramientas (máx. 20 vueltas)
 - `public/index.html` (~23 KB): interfaz completa
 - `Dockerfile`, `.dockerignore`, `.gitignore`, `package.json`
 - `README.md`: descripción general
