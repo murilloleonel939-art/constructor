@@ -390,16 +390,21 @@ app.post("/api/logout", (req, res) => {
 
 // --- Conversaciones guardadas ---
 app.get("/api/conversations", requireAuth, async (req, res) => {
-  const list = [];
-  for (const f of await fs.readdir(DATA_DIR)) {
-    if (!f.endsWith(".json")) continue;
-    try {
-      const { id, title, updatedAt } = JSON.parse(await fs.readFile(path.join(DATA_DIR, f), "utf8"));
-      list.push({ id, title, updatedAt });
-    } catch {}
+  try {
+    const list = [];
+    for (const f of await fs.readdir(DATA_DIR)) {
+      if (!f.endsWith(".json")) continue;
+      try {
+        const { id, title, updatedAt } = JSON.parse(await fs.readFile(path.join(DATA_DIR, f), "utf8"));
+        list.push({ id, title, updatedAt });
+      } catch {}
+    }
+    list.sort((a, b) => b.updatedAt - a.updatedAt);
+    res.json(list);
+  } catch (e) {
+    console.error("No se pudieron leer las conversaciones:", e);
+    res.status(500).json({ error: "No se pudieron leer las conversaciones" });
   }
-  list.sort((a, b) => b.updatedAt - a.updatedAt);
-  res.json(list);
 });
 
 app.get("/api/conversations/:id", requireAuth, async (req, res) => {
@@ -461,7 +466,10 @@ app.delete("/api/conversations/:id/project", requireAuth, async (req, res) => {
 // Acepta texto (string) o una lista de bloques de texto e imagen
 function validateMessages(messages) {
   if (!Array.isArray(messages) || messages.length === 0) return null;
-  if (messages.length > MAX_MESSAGES) return null;
+  if (messages.length > MAX_MESSAGES) {
+    console.error("Mensajes no válidos: demasiados mensajes", messages.length);
+    return null;
+  }
   let total = 0;
   let images = 0;
   const clean = [];
@@ -505,7 +513,14 @@ function validateMessages(messages) {
     if (blocks.length === 0) return null;
     clean.push({ role: m.role, content: blocks });
   }
-  if (images > MAX_IMAGES || total > MAX_CHARS || clean.at(-1).role !== "user") return null;
+  if (images > MAX_IMAGES || total > MAX_CHARS || clean.at(-1).role !== "user") {
+    console.error("Mensajes no válidos: límite superado", {
+      mensajes: messages.length,
+      caracteres: total,
+      imagenes: images,
+    });
+    return null;
+  }
   return clean;
 }
 
@@ -637,42 +652,4 @@ app.post("/api/chat", requireAuth, async (req, res) => {
 
 app.listen(PORT, () => {
   console.log(`Chat escuchando en el puerto ${PORT} (modelo: ${MODEL})`);
-});
-```
-
-**Antes de subirlo**
-- **Copia solo el código.** La primera línea debe ser `import crypto from "node:crypto";`, sin una palabra suelta antes.
-- **Qué cambió:** respecto a la versión anterior, solo se añadió la herramienta `github_editar`, su lógica y la línea del prompt. No toqué nada más, ni siquiera el `try/catch` pendiente de `/api/conversations`.
-- **Sin probar:** no he ejecutado este archivo. Después del redeploy, vincula un repo de prueba y pídele un cambio pequeño. Comprueba el commit en GitHub.
-- **No hace falta cambiar `index.html`.**
-try/catch` pendiente de `/api/conversations`. que hay que hacer con esto
-Es un arreglo pequeño y opcional. Está en la ruta que lista las conversaciones de la barra lateral:
-
-```js
-app.get("/api/conversations", requireAuth, async (req, res) => {
-  const list = [];
-  for (const f of await fs.readdir(DATA_DIR)) {
-```
-
-**El problema:** si `fs.readdir` falla, por ejemplo porque la carpeta no existe o no se puede leer, el error no se captura. Según la versión de Express, la petición puede quedarse colgada y no responder. Con tu volumen funcionando es poco probable que pase, así que no es urgente.
-
-**Cómo arreglarlo:** en `server.js`, busca esa ruta completa y sustitúyela por esta:
-
-```js
-app.get("/api/conversations", requireAuth, async (req, res) => {
-  try {
-    const list = [];
-    for (const f of await fs.readdir(DATA_DIR)) {
-      if (!f.endsWith(".json")) continue;
-      try {
-        const { id, title, updatedAt } = JSON.parse(await fs.readFile(path.join(DATA_DIR, f), "utf8"));
-        list.push({ id, title, updatedAt });
-      } catch {}
-    }
-    list.sort((a, b) => b.updatedAt - a.updatedAt);
-    res.json(list);
-  } catch (e) {
-    console.error("No se pudieron leer las conversaciones:", e);
-    res.status(500).json({ error: "No se pudieron leer las conversaciones" });
-  }
 });
