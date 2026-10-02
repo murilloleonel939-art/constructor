@@ -189,6 +189,33 @@
       border: 1px solid var(--error);
     }
     .typing::after { content: "▍"; animation: blink 1s steps(1) infinite; }
+
+    /* Tarjeta de confirmación de commits */
+    .confirm-card {
+      align-self: flex-start;
+      max-width: 95%;
+      border: 1px solid var(--user);
+      background: var(--panel);
+      border-radius: 12px;
+      padding: 12px 14px;
+      line-height: 1.4;
+    }
+    .confirm-commit { color: var(--muted); font-size: 0.88rem; margin: 4px 0 8px; }
+    .confirm-label { font-size: 0.8rem; color: var(--muted); margin-top: 6px; }
+    .confirm-card pre {
+      margin: 4px 0 0;
+      padding: 8px;
+      background: var(--bg);
+      border-radius: 8px;
+      font-size: 0.82rem;
+      max-height: 220px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .confirm-actions { display: flex; align-items: center; gap: 8px; margin-top: 10px; }
+    .confirm-actions button { padding: 8px 14px; }
+    .confirm-status { font-size: 0.9rem; color: var(--muted); }
     @keyframes blink { 50% { opacity: 0; } }
 
     #previews { display: flex; gap: 8px; flex-wrap: wrap; padding: 8px 16px 0; }
