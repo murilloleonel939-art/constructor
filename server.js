@@ -710,6 +710,8 @@ app.post("/api/chat", requireAuth, async (req, res) => {
     let message = "Error al contactar con la IA. Inténtalo de nuevo.";
     if (err instanceof Anthropic.AuthenticationError) {
       message = "La clave ANTHROPIC_API_KEY no es válida.";
+    } else if (err instanceof Anthropic.NotFoundError || err instanceof Anthropic.BadRequestError) {
+      message = `El modelo ${model} no está disponible o rechazó la petición. Prueba con otro.`;
     } else if (err instanceof Anthropic.RateLimitError) {
       message = "Demasiadas peticiones. Espera un momento.";
     } else if (err instanceof Anthropic.APIConnectionError) {
