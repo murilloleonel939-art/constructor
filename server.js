@@ -154,23 +154,6 @@ const GITHUB_TOOLS = [
       required: ["path", "content", "message"],
     },
   },
-  {
-    name: "github_editar",
-    description:
-      "Modifica un archivo EXISTENTE reemplazando un fragmento de texto exacto por otro. " +
-      "Úsala para cambios pequeños: solo envías el fragmento, no el archivo entero. " +
-      "'buscar' debe aparecer exactamente una vez en el archivo; incluye líneas de contexto si hace falta.",
-    input_schema: {
-      type: "object",
-      properties: {
-        path: { type: "string" },
-        buscar: { type: "string", description: "Texto exacto a reemplazar (debe ser único)" },
-        reemplazar: { type: "string", description: "Texto nuevo" },
-        message: { type: "string", description: "Mensaje del commit" },
-      },
-      required: ["path", "buscar", "reemplazar", "message"],
-    },
-  },
 ];
 
 async function runGithubTool(name, input, project, ctx) {
@@ -214,38 +197,6 @@ async function runGithubTool(name, input, project, ctx) {
     if (cur.ok && cur.data.sha) body.sha = cur.data.sha;
     const r = await gh(project, "PUT", `/contents/${encPath(p)}`, body);
     return r.ok ? `Guardado ${p} (commit ${r.data.commit?.sha?.slice(0, 7)})` : ghError(r);
-  }
-
-  if (name === "github_editar") {
-    if (ctx.usedWeb) {
-      return "Bloqueado por seguridad: en esta petición se leyó una página web externa. Pide el cambio de nuevo en un mensaje aparte.";
-    }
-    const { buscar, reemplazar, message } = input || {};
-    if (typeof buscar !== "string" || !buscar) return "Falta el fragmento a buscar";
-    if (typeof reemplazar !== "string" || reemplazar.length > 100_000) return "Texto de reemplazo no válido";
-    if (typeof message !== "string" || !message.trim()) return "Falta el mensaje del commit";
-
-    const cur = await gh(project, "GET", `/contents/${encPath(p)}${ref}`);
-    if (!cur.ok) return ghError(cur);
-    if (Array.isArray(cur.data) || cur.data.type !== "file" || !cur.data.content) {
-      return "No se puede editar: no es un archivo, está vacío o es demasiado grande";
-    }
-    const text = Buffer.from(cur.data.content, "base64").toString("utf8");
-    const count = text.split(buscar).length - 1;
-    if (count === 0) {
-      return "No se encontró el fragmento. Debe coincidir exactamente (espacios y saltos de línea). Lee el archivo y vuelve a intentarlo.";
-    }
-    if (count > 1) {
-      return `El fragmento aparece ${count} veces. Amplíalo con líneas de contexto para que sea único.`;
-    }
-    const nuevo = text.replace(buscar, () => reemplazar);
-    const r = await gh(project, "PUT", `/contents/${encPath(p)}`, {
-      message: message.trim().slice(0, 200),
-      content: Buffer.from(nuevo, "utf8").toString("base64"),
-      branch: project.branch,
-      sha: cur.data.sha,
-    });
-    return r.ok ? `Editado ${p} (commit ${r.data.commit?.sha?.slice(0, 7)})` : ghError(r);
   }
 
   return "Herramienta no disponible";
@@ -521,9 +472,8 @@ app.post("/api/chat", requireAuth, async (req, res) => {
     ? SYSTEM_PROMPT +
       `\n\nEsta conversación es un proyecto vinculado al repositorio privado ${project.repo} (rama ${project.branch}). ` +
       "Si es el primer mensaje, lee PROYECTO.md si existe. Antes de modificar un archivo, léelo. " +
-      "Para cambios pequeños en archivos existentes usa github_editar (solo envías el fragmento); " +
-      "usa github_guardar solo para archivos nuevos o reescrituras completas. Usa mensajes de commit claros. " +
-      "Si un archivo se leyó recortado, no lo sobrescribas con github_guardar. " +
+      "Guarda solo los archivos que necesiten cambiar, con un mensaje de commit claro. " +
+      "Si un archivo se leyó recortado, no lo sobrescribas. " +
       "Cuando hagas cambios importantes, actualiza PROYECTO.md con el contexto y las decisiones."
     : SYSTEM_PROMPT;
   const ctx = { usedWeb: false };
