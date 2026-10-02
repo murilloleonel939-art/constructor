@@ -36,4 +36,12 @@ App web de chat con Claude, protegida con contraseña, desplegada en Coolify (ht
 
 ## Pendiente
 - (Hecho) Quitada la palabra "html" suelta al inicio de `public/index.html`
-- Mejoras posibles: aviso en el frontend cuando el historial se acerque al límite; confirmación antes de cada commit
+- Mejora posible: aviso en el frontend cuando el historial se acerque al límite
+- (Hecho) Confirmación antes de cada commit: ver "Confirmación de commits" abajo
+
+## Confirmación de commits
+- El servidor (`askConfirm` en `server.js`) pausa `github_guardar` y `github_editar` y envía un evento NDJSON `{type: "confirm", id, tool, path, commit, buscar, reemplazar, content}` (textos recortados a 3000 caracteres)
+- El frontend muestra una tarjeta (`showConfirm` en `public/index.html`) con Aprobar / Rechazar y responde a `POST /api/confirm` con `{id, approve}`
+- Rechazo = botón Rechazar, 2 minutos sin respuesta o desconexión; la IA recibe un aviso de que no reintente
+- Solo se pide si el cliente envía `canConfirm: true` en `/api/chat`; no se pide si la petición ya leyó una web (el commit se bloquea de todos modos)
+- Limitación: la tarjeta se añade al final del chat, así que el texto que la IA escriba después aparece en la burbuja anterior
