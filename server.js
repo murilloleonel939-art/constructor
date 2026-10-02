@@ -633,20 +633,13 @@ app.post("/api/chat", requireAuth, async (req, res) => {
         send({ type: "text", text: "\n\n" });
       }
 
-      const params = {
+      const stream = client.beta.messages.stream({
         model,
+        ...modelParams(model),
         system,
         tools,
         messages: convo,
-      };
-      // Solo agregar modelParams para el modelo por defecto (que tiene config especial)
-      if (model === MODEL) {
-        Object.assign(params, modelParams(model));
-      } else {
-        // Otros modelos: max_tokens básico, sin fallback
-        params.max_tokens = 16000;
-      }
-      const stream = client.beta.messages.stream(params);
+      });
       currentStream = stream;
       stream.on("text", (text) => {
         answer += text;
