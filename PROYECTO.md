@@ -49,4 +49,5 @@ App web de chat con Claude, protegida con contraseña, desplegada en Coolify (ht
 
 <!-- si funciona -->
 <!-- prueba de confirmación -->
+<!-- prueba de rechazo -->
 
