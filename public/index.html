@@ -218,6 +218,23 @@
     .confirm-status { font-size: 0.9rem; color: var(--muted); }
     @keyframes blink { 50% { opacity: 0; } }
 
+    /* Aviso de conversación cerca del límite */
+    #limit-warn {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      margin: 8px 16px 0;
+      padding: 8px 12px;
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      background: var(--panel);
+      color: var(--muted);
+      font-size: 0.85rem;
+    }
+    #limit-warn.danger { border-color: var(--error); color: var(--error); }
+    #limit-warn button { padding: 4px 10px; font-size: 0.85rem; }
+
     #previews { display: flex; gap: 8px; flex-wrap: wrap; padding: 8px 16px 0; }
     .prev { position: relative; }
     .prev img { width: 56px; height: 56px; object-fit: cover; border-radius: 8px; border: 1px solid var(--border); }
