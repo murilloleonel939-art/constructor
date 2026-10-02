@@ -590,7 +590,7 @@ app.post("/api/chat", requireAuth, async (req, res) => {
 
   try {
     // Bucle de herramientas (máximo 5 vueltas)
-    for (let turn = 0; turn < 5; turn++) {
+    for (let turn = 0; turn < 20; turn++) {
       // Separa el texto de vueltas distintas
       if (turn > 0 && answer && !answer.endsWith("\n")) {
         answer += "\n\n";
