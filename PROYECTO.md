@@ -35,5 +35,5 @@ App web de chat con Claude, protegida con contraseña, desplegada en Coolify (ht
 - `server.js` supera el límite de lectura (20.000 caracteres): no sobrescribirlo con `github_guardar`, usar `github_editar`
 
 ## Pendiente
-- Quitar la palabra "html" suelta al inicio de `public/index.html`
+- (Hecho) Quitada la palabra "html" suelta al inicio de `public/index.html`
 - Mejoras posibles: aviso en el frontend cuando el historial se acerque al límite; confirmación antes de cada commit
