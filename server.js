@@ -71,6 +71,137 @@ async function loadHistory(id, messages) {
   return [...messages];
 }
 
+// --- Proyectos de GitHub (uno por conversación; el token vive solo en el servidor) ---
+const PROJECTS_DIR = process.env.PROJECTS_DIR || "/data/projects";
+await fs.mkdir(PROJECTS_DIR, { recursive: true });
+const projectFile = (id) => path.join(PROJECTS_DIR, id + ".json");
+const REPO_RE = /^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const BRANCH_RE = /^[A-Za-z0-9_./-]{1,100}$/;
+
+async function loadProject(id) {
+  if (!id) return null;
+  try {
+    return JSON.parse(await fs.readFile(projectFile(id), "utf8"));
+  } catch {
+    return null;
+  }
+}
+
+async function saveProject(id, project) {
+  await fs.writeFile(projectFile(id), JSON.stringify(project), { mode: 0o600 });
+}
+
+async function gh(project, method, apiPath, body) {
+  try {
+    const r = await fetch(`https://api.github.com/repos/${project.repo}${apiPath}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${project.token}`,
+        Accept: "application/vnd.github+json",
+        "X-GitHub-Api-Version": "2022-11-28",
+        "User-Agent": "chat-app",
+        ...(body ? { "Content-Type": "application/json" } : {}),
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(30_000),
+    });
+    const data = await r.json().catch(() => ({}));
+    return { ok: r.ok, status: r.status, data };
+  } catch (e) {
+    return { ok: false, status: 0, data: { message: e.message } };
+  }
+}
+
+function safePath(p) {
+  if (typeof p !== "string") return null;
+  const clean = p.replace(/^\/+/, "");
+  if (!clean || clean.length > 300) return null;
+  if (clean.split("/").some((s) => s === "" || s === "." || s === "..")) return null;
+  if (clean.toLowerCase().startsWith(".github/")) return null; // no tocar workflows
+  return clean;
+}
+const encPath = (p) => p.split("/").map(encodeURIComponent).join("/");
+const ghError = (r) => `Error ${r.status}: ${r.data?.message || "desconocido"}`;
+
+const GITHUB_TOOLS = [
+  {
+    name: "github_listar",
+    description: "Lista los archivos del repositorio de GitHub vinculado a este proyecto.",
+    input_schema: { type: "object", properties: {} },
+  },
+  {
+    name: "github_leer",
+    description:
+      "Lee un archivo del repositorio vinculado. Si el resultado aparece recortado, no lo sobrescribas.",
+    input_schema: {
+      type: "object",
+      properties: { path: { type: "string", description: "Ruta, por ejemplo src/app.js" } },
+      required: ["path"],
+    },
+  },
+  {
+    name: "github_guardar",
+    description:
+      "Crea o reemplaza UN archivo completo en el repositorio vinculado, con un commit. " +
+      "Envía el contenido completo del archivo, no solo el fragmento cambiado.",
+    input_schema: {
+      type: "object",
+      properties: {
+        path: { type: "string" },
+        content: { type: "string", description: "Contenido completo del archivo" },
+        message: { type: "string", description: "Mensaje del commit" },
+      },
+      required: ["path", "content", "message"],
+    },
+  },
+];
+
+async function runGithubTool(name, input, project, ctx) {
+  if (name === "github_listar") {
+    const r = await gh(project, "GET", `/git/trees/${encodeURIComponent(project.branch)}?recursive=1`);
+    if (!r.ok) return ghError(r);
+    const files = r.data.tree.filter((t) => t.type === "blob").map((t) => `${t.path} (${t.size} bytes)`);
+    let out = files.slice(0, 500).join("\n");
+    if (files.length > 500) out += `\n... y ${files.length - 500} más`;
+    if (r.data.truncated) out += "\n(lista incompleta)";
+    return out || "El repositorio está vacío";
+  }
+
+  const p = safePath(input?.path);
+  if (!p) return "Ruta no válida";
+  const ref = `?ref=${encodeURIComponent(project.branch)}`;
+
+  if (name === "github_leer") {
+    const r = await gh(project, "GET", `/contents/${encPath(p)}${ref}`);
+    if (!r.ok) return ghError(r);
+    if (Array.isArray(r.data) || r.data.type !== "file") return "No es un archivo";
+    if (!r.data.content) return "El archivo está vacío o es demasiado grande";
+    const text = Buffer.from(r.data.content, "base64").toString("utf8");
+    return text.length > 20000 ? text.slice(0, 20000) + "\n[... RECORTADO ...]" : text;
+  }
+
+  if (name === "github_guardar") {
+    if (ctx.usedWeb) {
+      return "Bloqueado por seguridad: en esta petición se leyó una página web externa. Pide el cambio de nuevo en un mensaje aparte.";
+    }
+    const { content, message } = input || {};
+    if (typeof content !== "string" || content.length > 200_000) return "Contenido no válido o demasiado grande";
+    if (typeof message !== "string" || !message.trim()) return "Falta el mensaje del commit";
+    const cur = await gh(project, "GET", `/contents/${encPath(p)}${ref}`);
+    if (!cur.ok && cur.status !== 404) return ghError(cur);
+    const body = {
+      message: message.trim().slice(0, 200),
+      content: Buffer.from(content, "utf8").toString("base64"),
+      branch: project.branch,
+    };
+    if (cur.ok && cur.data.sha) body.sha = cur.data.sha;
+    const r = await gh(project, "PUT", `/contents/${encPath(p)}`, body);
+    return r.ok ? `Guardado ${p} (commit ${r.data.commit?.sha?.slice(0, 7)})` : ghError(r);
+  }
+
+  return "Herramienta no disponible";
+}
+
 // --- Herramienta para leer URLs ---
 const TOOLS = [
   {
@@ -234,6 +365,47 @@ app.get("/api/conversations/:id", requireAuth, async (req, res) => {
 app.delete("/api/conversations/:id", requireAuth, async (req, res) => {
   if (!ID_RE.test(req.params.id)) return res.status(400).json({ error: "ID no válido" });
   await fs.rm(fileOf(req.params.id), { force: true });
+  await fs.rm(projectFile(req.params.id), { force: true }); // borra también el token del proyecto
+  res.json({ ok: true });
+});
+
+// --- Proyecto de GitHub vinculado a una conversación ---
+app.get("/api/conversations/:id/project", requireAuth, async (req, res) => {
+  if (!ID_RE.test(req.params.id)) return res.status(400).json({ error: "ID no válido" });
+  const p = await loadProject(req.params.id);
+  res.json(p ? { repo: p.repo, branch: p.branch } : {}); // nunca devuelve el token
+});
+
+app.put("/api/conversations/:id/project", requireAuth, async (req, res) => {
+  const id = req.params.id;
+  if (!ID_RE.test(id)) return res.status(400).json({ error: "ID no válido" });
+  const repo = req.body?.repo;
+  const branch = req.body?.branch || "main";
+  if (typeof repo !== "string" || !REPO_RE.test(repo)) {
+    return res.status(400).json({ error: "Repo no válido (usa dueño/nombre)" });
+  }
+  if (typeof branch !== "string" || !BRANCH_RE.test(branch)) {
+    return res.status(400).json({ error: "Rama no válida" });
+  }
+  const old = await loadProject(id);
+  const given = typeof req.body?.token === "string" ? req.body.token.trim() : "";
+  const token = given || old?.token;
+  if (!token) return res.status(400).json({ error: "Falta el token" });
+
+  const project = { repo, branch, token };
+  const check = await gh(project, "GET", `/branches/${encodeURIComponent(branch)}`);
+  if (!check.ok) {
+    return res
+      .status(400)
+      .json({ error: `No se pudo acceder (${check.status}). Revisa repo, rama y token.` });
+  }
+  await saveProject(id, project);
+  res.json({ ok: true, repo, branch });
+});
+
+app.delete("/api/conversations/:id/project", requireAuth, async (req, res) => {
+  if (!ID_RE.test(req.params.id)) return res.status(400).json({ error: "ID no válido" });
+  await fs.rm(projectFile(req.params.id), { force: true });
   res.json({ ok: true });
 });
 
@@ -293,6 +465,19 @@ app.post("/api/chat", requireAuth, async (req, res) => {
   if (!messages) return res.status(400).json({ error: "Mensajes no válidos" });
   const convId = ID_RE.test(req.body?.id) ? req.body.id : null;
 
+  // Proyecto de GitHub vinculado (si existe)
+  const project = await loadProject(convId);
+  const tools = project ? [...TOOLS, ...GITHUB_TOOLS] : TOOLS;
+  const system = project
+    ? SYSTEM_PROMPT +
+      `\n\nEsta conversación es un proyecto vinculado al repositorio privado ${project.repo} (rama ${project.branch}). ` +
+      "Si es el primer mensaje, lee PROYECTO.md si existe. Antes de modificar un archivo, léelo. " +
+      "Guarda solo los archivos que necesiten cambiar, con un mensaje de commit claro. " +
+      "Si un archivo se leyó recortado, no lo sobrescribas. " +
+      "Cuando hagas cambios importantes, actualiza PROYECTO.md con el contexto y las decisiones."
+    : SYSTEM_PROMPT;
+  const ctx = { usedWeb: false };
+
   // Respuesta en vivo: una línea JSON por cada trozo de texto
   res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
   res.setHeader("Cache-Control", "no-cache");
@@ -321,12 +506,12 @@ app.post("/api/chat", requireAuth, async (req, res) => {
       const stream = client.beta.messages.stream({
         model: MODEL,
         max_tokens: 64000,
-        system: SYSTEM_PROMPT,
+        system,
         output_config: { effort: "low" },
         // Si el filtro de seguridad rechaza la petición, Anthropic la reintenta con otro modelo
         betas: ["server-side-fallback-2026-07-01"],
         fallbacks: "default",
-        tools: TOOLS,
+        tools,
         messages: convo,
       });
       currentStream = stream;
@@ -338,15 +523,24 @@ app.post("/api/chat", requireAuth, async (req, res) => {
 
       if (final.stop_reason === "tool_use") {
         convo.push({ role: "assistant", content: final.content });
+
+        // Si en esta vuelta se lee una web, se bloquea guardar en GitHub durante esta petición
+        if (final.content.some((b) => b.type === "tool_use" && b.name === "leer_url")) {
+          ctx.usedWeb = true;
+        }
+
         const results = [];
         for (const block of final.content) {
-          if (block.type === "tool_use") {
-            results.push({
-              type: "tool_result",
-              tool_use_id: block.id,
-              content: await leerUrl(block.input?.url),
-            });
+          if (block.type !== "tool_use") continue;
+          let content;
+          if (block.name === "leer_url") {
+            content = await leerUrl(block.input?.url);
+          } else if (project && block.name.startsWith("github_")) {
+            content = await runGithubTool(block.name, block.input, project, ctx);
+          } else {
+            content = "Herramienta no disponible";
           }
+          results.push({ type: "tool_result", tool_use_id: block.id, content });
         }
         convo.push({ role: "user", content: results });
         continue; // vuelve a llamar al modelo con el resultado
@@ -366,7 +560,7 @@ app.post("/api/chat", requireAuth, async (req, res) => {
     if (!finished) {
       send({
         type: "error",
-        error: "Se alcanzó el límite de lecturas de páginas. La respuesta puede estar incompleta.",
+        error: "Se alcanzó el límite de herramientas por mensaje. La respuesta puede estar incompleta.",
       });
     }
     if (convId && answer) {
