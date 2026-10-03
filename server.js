@@ -53,7 +53,8 @@ const MAX_IMAGES = 5; // imágenes máximas por petición
 const MAX_IMAGE_B64 = 7_000_000; // ~5 MB por imagen (en base64)
 const IMAGE_TYPES = ["image/jpeg", "image/png", "image/gif", "image/webp"];
 
-const client = new Anthropic(); // lee ANTHROPIC_API_KEY automáticamente
+const anthropic = new Anthropic(); // lee ANTHROPIC_API_KEY automáticamente
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 const app = express();
 app.set("trust proxy", true); // Coolify pone un proxy delante
 app.use(express.json({ limit: "25mb" }));
