@@ -28,7 +28,7 @@ function modelParams(model) {
       output_config: { effort: "low" },
     };
   }
-  // Otros modelos (ej: haiku): configuración mínima, sin betas especiales
+  // Otros modelos (ej: haiku): no soportan effort, sin betas especiales
   return { max_tokens: 16000 };
 }
 
