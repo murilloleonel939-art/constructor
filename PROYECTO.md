@@ -46,13 +46,20 @@ App web de chat con Claude, protegida con contraseña, desplegada en Coolify (ht
 - (Hecho) Confirmación de commits verificada en producción: Aprobar hace el commit y Rechazar lo cancela sin commit
 - (Hecho) Confirmación antes de cada commit: ver "Confirmación de commits" abajo
 
-## Selección de modelo
-- Variable `MODELS` (opcional, separada por comas; por defecto `claude-haiku-4-5-20251001`). La lista que ve el usuario es `MODEL` + `MODELS`
-- `GET /api/models` devuelve la lista; `/api/chat` recibe `model` y lo valida contra esa lista (si no está, usa `MODEL`)
-- Cada modelo tiene su propia configuración en `modelParams` (`server.js`): el modelo por defecto (`MODEL`) usa `effort: low` y el fallback beta con `max_tokens` 64000; los demás usan una llamada básica (`max_tokens` 16000) porque pueden no admitir esos parámetros
-- El navegador guarda la elección en `localStorage` (global, no por conversación)
-- Si un modelo da 404 o 400, el usuario ve un mensaje claro y puede elegir otro
-- Sin probar en producción
+## Selección de modelo (ACTUALIZADO)
+- **Modelos disponibles:** `MODEL` (Sonnet) + `MODELS` (lista separada por comas; puede incluir OpenAI)
+- **Endpoint `/api/models`:** devuelve `{ models: [...], default: MODEL }`
+- **Selector en frontend:** dropdown en la cabecera, guarda elección en `localStorage` (global, no por conversación)
+- **En `/api/chat`:** valida `model` contra la lista; si no es válido, usa `MODEL`
+- **Enrutamiento a APIs:**
+  - Si `model.includes("gpt")` → usa OpenAI SDK
+  - Si `model.includes("claude")` → usa Anthropic SDK
+- **Configuración por modelo (`modelParams`):**
+  - **Sonnet (Claude):** `effort: "low"`, `max_tokens: 64000`, fallback beta
+  - **Otros Claude:** `max_tokens: 16000` (sin `effort`, que solo Sonnet soporta)
+  - **GPT-4-turbo:** `max_tokens: 4096`, parámetros básicos de OpenAI
+- **Estado:** Endpoint funcionando, selector en frontend, validación en servidor. **En progreso:** completar lógica de enrutamiento OpenAI en `/api/chat`
+- **Problema resuelto:** HAIKU no respondía como HAIKU porque Anthropic rechazaba `effort: "low"` (parámetro no soportado). Arreglado separando configuraciones por modelo.
 
 ## Confirmación de commits
 - El servidor (`askConfirm` en `server.js`) pausa `github_guardar` y `github_editar` y envía un evento NDJSON `{type: "confirm", id, tool, path, commit, buscar, reemplazar, content}` (textos recortados a 3000 caracteres)
