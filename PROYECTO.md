@@ -45,12 +45,14 @@ App web de chat con Claude, protegida con contraseña, desplegada en Coolify (ht
 - (Hecho, sin probar en producción) Aviso en el frontend cuando el historial llega al 80 % de un límite (mensajes, caracteres o imágenes); rojo al 95 %. Función `updateLimitWarning` en `public/index.html`, con botón "Nueva conversación"
 - (Hecho) Confirmación de commits verificada en producción: Aprobar hace el commit y Rechazar lo cancela sin commit
 - (Hecho) Confirmación antes de cada commit: ver "Confirmación de commits" abajo
-- (En progreso) Integración de OpenAI GPT-4-turbo:
+- (Hecho) Integración de OpenAI GPT-4-turbo:
   - ✅ Agregar `openai` a `package.json`
   - ✅ Crear cliente de OpenAI
-  - 🔄 Completar lógica de enrutamiento en `/api/chat` (elegir API según modelo)
-  - 🔄 Adaptar streaming NDJSON para OpenAI (formato diferente al de Anthropic)
-  - 🔄 Probar que GPT-4-turbo responda correctamente
+  - ✅ Completar lógica de enrutamiento en `/api/chat` (elige API según `model.includes("gpt")` o `"claude"`)
+  - ✅ Adaptar streaming NDJSON para OpenAI: acumula `delta.content` y `delta.tool_calls` de múltiples chunks
+  - ✅ Bucle de herramientas para OpenAI (máx. 6 vueltas como Anthropic)
+  - ✅ Confirmación de commits integrada en OpenAI también
+  - 🔄 Probar que GPT-4-turbo responda correctamente (pendiente en producción)
 
 ## Selección de modelo (ACTUALIZADO)
 - **Modelos disponibles:** `MODEL` (Sonnet) + `MODELS` (lista separada por comas; puede incluir OpenAI)
