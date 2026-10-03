@@ -21,14 +21,14 @@ const MODEL_IDS = [
 ];
 // Configuración propia de cada modelo
 function modelParams(model) {
-  if (model === MODEL) {
-    // Modelo por defecto (sonnet): usa effort bajo
+  // Solo sonnet soporta effort parameter
+  if (model === "claude-sonnet-5-5") {
     return {
       max_tokens: 64000,
       output_config: { effort: "low" },
     };
   }
-  // Otros modelos (ej: haiku): no soportan effort, sin betas especiales
+  // Otros modelos: sin effort, configuración mínima
   return { max_tokens: 16000 };
 }
 
