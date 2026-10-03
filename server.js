@@ -709,7 +709,7 @@ app.post("/api/chat", requireAuth, async (req, res) => {
             content: [
               { type: "text", text: answer },
               ...toolCalls.map((tc) => ({
-                type: "tool_use", // Formato simulado para compatibilidad
+                type: "tool_use",
                 id: tc.id,
                 name: tc.function.name,
                 input: JSON.parse(tc.function.arguments || "{}"),
@@ -808,10 +808,10 @@ app.post("/api/chat", requireAuth, async (req, res) => {
             })),
           });
 
-          continue; // Siguiente iteración del bucle
+          continue;
         }
 
-        break; // Si finish_reason no es reconocido, salir
+        break;
       }
 
       await saveConversation(id, clean, fullAnswer, history);
@@ -853,7 +853,6 @@ app.post("/api/chat", requireAuth, async (req, res) => {
         response = await anthropic.messages.create(params);
 
         if (response.stop_reason === "end_turn") {
-          // Respuesta completa, sin tool calls
           let answer = "";
           for (const b of response.content) {
             if (b.type === "text") {
@@ -866,7 +865,6 @@ app.post("/api/chat", requireAuth, async (req, res) => {
         }
 
         if (response.stop_reason === "tool_use") {
-          // Hay tool calls
           let assistantAnswer = "";
           const toolUseBlocks = [];
 
@@ -879,13 +877,11 @@ app.post("/api/chat", requireAuth, async (req, res) => {
             }
           }
 
-          // Agregar respuesta del asistente al historial (con tool calls)
           history.push({
             role: "assistant",
             content: response.content,
           });
 
-          // Ejecutar herramientas y agregar resultados
           const toolResults = [];
           for (const tb of toolUseBlocks) {
             const tool = tb.name;
@@ -905,7 +901,6 @@ app.post("/api/chat", requireAuth, async (req, res) => {
 
             let output = await askTool(tool, input);
 
-            // Pedir confirmación si es github_guardar o github_editar
             if ((tool === "github_guardar" || tool === "github_editar") && canConfirm) {
               const confirmId = crypto.randomUUID();
               const buscar =
@@ -964,18 +959,14 @@ app.post("/api/chat", requireAuth, async (req, res) => {
             );
           }
 
-          // Agregar resultados al historial
           history.push({ role: "user", content: toolResults });
 
-          // Continuar el bucle si no alcanzamos el límite
           continue;
         }
 
-        // Otro stop_reason (ej: max_tokens)
         break;
       }
 
-      // Guardar conversación
       const answer = response.content.find((b) => b.type === "text")?.text || "";
       await saveConversation(id, clean, answer, history);
 
@@ -987,190 +978,10 @@ app.post("/api/chat", requireAuth, async (req, res) => {
       res.end();
     }
   } else {
-    // Modelo no reconocido
     res.status(400).json({ error: "Modelo no soportado" });
   }
 });
 
 app.listen(PORT, () => {
   console.log(`Servidor escuchando en puerto ${PORT}`);
-});its: el usuario aprueba cada guardar/editar ---
-const pendingConfirms = new Map(); // id -> { done }
-const CONFIRM_TIMEOUT_MS = 2 * 60 * 1000;
-
-// Envía la petición al cliente y espera su respuesta. Sin respuesta, desconexión o timeout = rechazo
-function askConfirm(res, info) {
-  return new Promise((resolve) => {
-    const id = crypto.randomUUID();
-    const done = (approved) => {
-      clearTimeout(timer);
-      pendingConfirms.delete(id);
-      resolve(approved);
-    };
-    const timer = setTimeout(() => done(false), CONFIRM_TIMEOUT_MS);
-    pendingConfirms.set(id, { done });
-    res.once("close", () => done(false));
-    res.write(JSON.stringify({ type: "confirm", id, ...info }) + "\n");
-  });
-}
-
-app.post("/api/confirm", requireAuth, (req, res) => {
-  const entry = typeof req.body?.id === "string" ? pendingConfirms.get(req.body.id) : null;
-  if (!entry) return res.status(404).json({ error: "Confirmación no encontrada o caducada" });
-  entry.done(req.body?.approve === true);
-  res.json({ ok: true });
-});
-
-app.get("/api/models", requireAuth, (req, res) => {
-  res.json({ models: MODEL_IDS, default: MODEL });
-});
-
-app.post("/api/chat", requireAuth, async (req, res) => {
-  const messages = validateMessages(req.body?.messages);
-  if (!messages) return res.status(400).json({ error: "Mensajes no válidos" });
-  const convId = ID_RE.test(req.body?.id) ? req.body.id : null;
-  // Solo se aceptan modelos de la lista permitida
-  const requestedModel = req.body?.model;
-  const model = MODEL_IDS.includes(requestedModel) ? requestedModel : MODEL;
-  console.log(`[/api/chat] Modelos disponibles: ${MODEL_IDS.join(", ")}. Solicitado: "${requestedModel}". Usando: "${model}"`);
-
-  // Proyecto de GitHub vinculado (si existe)
-  const project = await loadProject(convId);
-  const tools = project ? [...TOOLS, ...GITHUB_TOOLS] : TOOLS;
-  const system = project
-    ? SYSTEM_PROMPT +
-      `\n\nEsta conversación es un proyecto vinculado al repositorio privado ${project.repo} (rama ${project.branch}). ` +
-      "Si es el primer mensaje, lee PROYECTO.md si existe. Antes de modificar un archivo, léelo. " +
-      "Para cambios pequeños en archivos existentes usa github_editar (solo envías el fragmento); " +
-      "usa github_guardar solo para archivos nuevos o reescrituras completas. Usa mensajes de commit claros. " +
-      "Si un archivo se leyó recortado, no lo sobrescribas con github_guardar. " +
-      "Cuando hagas cambios importantes, actualiza PROYECTO.md con el contexto y las decisiones."
-    : SYSTEM_PROMPT;
-  const ctx = { usedWeb: false };
-  // Solo se pide confirmación si el cliente la soporta (así los clientes antiguos no se quedan esperando)
-  const canConfirm = req.body?.canConfirm === true;
-
-  // Respuesta en vivo: una línea JSON por cada trozo de texto
-  res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("X-Accel-Buffering", "no");
-  const send = (obj) => res.write(JSON.stringify(obj) + "\n");
-
-  // Conversación de trabajo (incluye resultados de herramientas de vueltas anteriores)
-  const convo = await loadHistory(convId, messages);
-  let currentStream = null;
-  let answer = "";
-  let finished = false;
-
-  res.on("close", () => {
-    if (!res.writableEnded) currentStream?.abort();
-  });
-
-  try {
-    // Bucle de herramientas (máximo 5 vueltas)
-    for (let turn = 0; turn < 6; turn++) {
-      // Separa el texto de vueltas distintas
-      if (turn > 0 && answer && !answer.endsWith("\n")) {
-        answer += "\n\n";
-        send({ type: "text", text: "\n\n" });
-      }
-
-      const stream = client.beta.messages.stream({
-        model,
-        ...modelParams(model),
-        system,
-        tools,
-        messages: convo,
-      });
-      currentStream = stream;
-      stream.on("text", (text) => {
-        answer += text;
-        send({ type: "text", text });
-      });
-      const final = await stream.finalMessage();
-
-      if (final.stop_reason === "tool_use") {
-        convo.push({ role: "assistant", content: final.content });
-
-        // Si en esta vuelta se lee una web, se bloquea guardar en GitHub durante esta petición
-        if (final.content.some((b) => b.type === "tool_use" && b.name === "leer_url")) {
-          ctx.usedWeb = true;
-        }
-
-        const results = [];
-        for (const block of final.content) {
-          if (block.type !== "tool_use") continue;
-          let content;
-          if (block.name === "leer_url") {
-            content = await leerUrl(block.input?.url);
-          } else if (project && block.name.startsWith("github_")) {
-            const writes = block.name === "github_guardar" || block.name === "github_editar";
-            let approved = true;
-            if (writes && canConfirm && !ctx.usedWeb) {
-              const i = block.input || {};
-              const cut = (s) => (typeof s === "string" ? s.slice(0, 3000) : "");
-              approved = await askConfirm(res, {
-                tool: block.name,
-                path: cut(i.path),
-                commit: cut(i.message),
-                buscar: cut(i.buscar),
-                reemplazar: cut(i.reemplazar),
-                content: cut(i.content),
-              });
-            }
-            content = approved
-              ? await runGithubTool(block.name, block.input, project, ctx)
-              : "El usuario rechazó este cambio (o no respondió a tiempo). No lo reintentes sin que lo pida.";
-          } else {
-            content = "Herramienta no disponible";
-          }
-          results.push({ type: "tool_result", tool_use_id: block.id, content });
-        }
-        convo.push({ role: "user", content: results });
-        continue; // vuelve a llamar al modelo con el resultado
-      }
-
-      convo.push({ role: "assistant", content: final.content });
-      finished = true;
-
-      if (final.stop_reason === "refusal") {
-        send({ type: "error", error: "La IA no puede responder a esta petición." });
-      } else if (final.stop_reason === "max_tokens") {
-        send({ type: "error", error: "La respuesta se cortó por ser demasiado larga." });
-      }
-      break;
-    }
-
-    if (!finished) {
-      send({
-        type: "error",
-        error: "Se alcanzó el límite de herramientas por mensaje. La respuesta puede estar incompleta.",
-      });
-    }
-    if (convId && answer) {
-      // Si no terminó, convo acaba en un mensaje de usuario: no se guarda history
-      await saveConversation(convId, messages, answer, finished ? convo : undefined);
-    }
-    send({ type: "done" });
-  } catch (err) {
-    if (err instanceof Anthropic.APIUserAbortError) return;
-    console.error("Error de la API de Anthropic:", err);
-    let message = "Error al contactar con la IA. Inténtalo de nuevo.";
-    if (err instanceof Anthropic.AuthenticationError) {
-      message = "La clave ANTHROPIC_API_KEY no es válida.";
-    } else if (err instanceof Anthropic.NotFoundError || err instanceof Anthropic.BadRequestError) {
-      message = `El modelo ${model} no está disponible o rechazó la petición. Prueba con otro.`;
-    } else if (err instanceof Anthropic.RateLimitError) {
-      message = "Demasiadas peticiones. Espera un momento.";
-    } else if (err instanceof Anthropic.APIConnectionError) {
-      message = "No se pudo conectar con Anthropic.";
-    }
-    send({ type: "error", error: message });
-  } finally {
-    res.end();
-  }
-});
-
-app.listen(PORT, () => {
-  console.log(`Chat escuchando en el puerto ${PORT} (modelo: ${MODEL})`);
 });
