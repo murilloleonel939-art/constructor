@@ -6,7 +6,8 @@ Contexto para retomar el proyecto en conversaciones nuevas.
 App web de chat con Claude, protegida con contraseña, desplegada en Coolify (https://constructor.zottagroup.com). Permite guardar conversaciones, adjuntar imágenes y vincular cada conversación a un repo de GitHub para leer y editar archivos.
 
 ## Stack
-- Node.js (ES modules), Express, @anthropic-ai/sdk
+- Node.js (ES modules), Express
+- APIs: @anthropic-ai/sdk (Claude), openai (GPT-4-turbo) — **soporte multi-API**
 - Frontend: `public/index.html` (HTML + JS sin framework)
 - Respuesta en streaming (NDJSON) desde `/api/chat`
 
