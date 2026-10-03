@@ -544,7 +544,457 @@ function validateMessages(messages) {
   return clean;
 }
 
-// --- Confirmación de commits: el usuario aprueba cada guardar/editar ---
+// --- Confirmación de commits ---
+const confirms = new Map(); // id -> { tool, path, commit, buscar, reemplazar, content, resolve }
+
+async function askConfirm(id, tool, path, commit, buscar, reemplazar, content) {
+  return new Promise((resolve) => {
+    confirms.set(id, { tool, path, commit, buscar, reemplazar, content, resolve });
+    // Timeout: si no responde en 2 minutos, rechaza automáticamente
+    setTimeout(() => {
+      const c = confirms.get(id);
+      if (c) {
+        confirms.delete(id);
+        c.resolve(false);
+      }
+    }, 2 * 60 * 1000);
+  });
+}
+
+app.post("/api/confirm", requireAuth, (req, res) => {
+  const { id, approve } = req.body || {};
+  const c = confirms.get(id);
+  if (!c) return res.status(400).json({ error: "Confirmación no encontrada" });
+  confirms.delete(id);
+  c.resolve(approve === true);
+  res.json({ ok: true });
+});
+
+// --- POST /api/chat: streaming NDJSON con Anthropic o OpenAI ---
+app.post("/api/chat", requireAuth, async (req, res) => {
+  const { conversationId: id, messages, model: chosenModel, canConfirm } = req.body || {};
+  const clean = validateMessages(messages);
+  if (!clean) return res.status(400).json({ error: "Mensajes no válidos" });
+
+  // Validar y seleccionar modelo
+  let model = chosenModel;
+  if (!MODEL_IDS.includes(model)) {
+    model = MODEL;
+  }
+
+  const project = await loadProject(id);
+  const tools = project ? GITHUB_TOOLS : [];
+  const allTools = [...TOOLS, ...tools];
+
+  const ctx = { usedWeb: false, askedTools: [] };
+  let history = await loadHistory(id, clean);
+
+  res.setHeader("Content-Type", "application/x-ndjson");
+
+  // Detectar qué API usar
+  const useOpenAI = model.includes("gpt");
+  const useAnthropic = model.includes("claude");
+
+  if (useOpenAI) {
+    // --- OpenAI (GPT-4-turbo) ---
+    try {
+      const askTool = async (tool, input) => {
+        let output;
+        if (tool === "leer_url") {
+          output = await leerUrl(input?.url);
+          ctx.usedWeb = true;
+        } else {
+          output = await runGithubTool(tool, input, project, ctx);
+        }
+        return output;
+      };
+
+      // Convertir historial a formato OpenAI
+      const toOpenAIFormat = (messages) =>
+        messages.map((m) => {
+          if (typeof m.content === "string") {
+            return { role: m.role, content: m.content };
+          }
+          // Bloques (texto + imágenes)
+          return {
+            role: m.role,
+            content: m.content.map((b) => {
+              if (b.type === "text") {
+                return { type: "text", text: b.text };
+              } else if (b.type === "image") {
+                return {
+                  type: "image_url",
+                  image_url: {
+                    url: `data:${b.source.media_type};base64,${b.source.data}`,
+                    detail: "auto",
+                  },
+                };
+              }
+            }),
+          };
+        });
+
+      let loop = 0;
+      let fullAnswer = "";
+
+      while (loop < 6) {
+        loop++;
+        const messagesForOpenAI = toOpenAIFormat(history);
+
+        const stream = await openai.chat.completions.create({
+          model,
+          messages: messagesForOpenAI,
+          system: SYSTEM_PROMPT,
+          max_tokens: 4096,
+          stream: true,
+          tools:
+            allTools.length > 0
+              ? allTools.map((t) => ({
+                  type: "function",
+                  function: {
+                    name: t.name,
+                    description: t.description,
+                    parameters: t.input_schema,
+                  },
+                }))
+              : undefined,
+        });
+
+        let answer = "";
+        let toolCalls = [];
+        let finishReason = null;
+
+        // Procesar stream y acumular chunks
+        for await (const chunk of stream) {
+          if (chunk.choices[0]?.delta?.content) {
+            const text = chunk.choices[0].delta.content;
+            answer += text;
+            res.write(JSON.stringify({ type: "text", text }) + "\n");
+          }
+
+          // Acumular tool_calls (pueden venir en múltiples chunks)
+          if (chunk.choices[0]?.delta?.tool_calls) {
+            for (const tc of chunk.choices[0].delta.tool_calls) {
+              if (!toolCalls[tc.index]) {
+                toolCalls[tc.index] = {
+                  id: tc.id || "",
+                  function: { name: "", arguments: "" },
+                };
+              }
+              if (tc.function?.name) {
+                toolCalls[tc.index].function.name = tc.function.name;
+              }
+              if (tc.function?.arguments) {
+                toolCalls[tc.index].function.arguments += tc.function.arguments;
+              }
+            }
+          }
+
+          finishReason = chunk.choices[0]?.finish_reason;
+        }
+
+        fullAnswer += answer;
+
+        // Si no hay tool calls, terminamos
+        if (finishReason === "stop" || toolCalls.length === 0) {
+          history.push({ role: "assistant", content: fullAnswer });
+          break;
+        }
+
+        // Procesar tool calls
+        if (finishReason === "tool_calls" && toolCalls.length > 0) {
+          // Agregar respuesta del asistente (con tool calls pendientes)
+          history.push({
+            role: "assistant",
+            content: [
+              { type: "text", text: answer },
+              ...toolCalls.map((tc) => ({
+                type: "tool_use", // Formato simulado para compatibilidad
+                id: tc.id,
+                name: tc.function.name,
+                input: JSON.parse(tc.function.arguments || "{}"),
+              })),
+            ],
+          });
+
+          // Ejecutar herramientas
+          const toolResults = [];
+          for (const tc of toolCalls) {
+            if (!tc.id || !tc.function.name) continue;
+
+            const tool = tc.function.name;
+            const input = JSON.parse(tc.function.arguments || "{}");
+
+            res.write(
+              JSON.stringify({
+                type: "tool",
+                tool,
+                input: JSON.stringify(input).slice(0, 3000),
+              }) + "\n"
+            );
+
+            if (!ctx.askedTools.includes(tool)) {
+              ctx.askedTools.push(tool);
+            }
+
+            let output = await askTool(tool, input);
+
+            // Pedir confirmación si es github_guardar o github_editar
+            if ((tool === "github_guardar" || tool === "github_editar") && canConfirm) {
+              const confirmId = crypto.randomUUID();
+              const buscar =
+                tool === "github_editar"
+                  ? (input?.buscar || "").slice(0, 3000)
+                  : undefined;
+              const reemplazar =
+                tool === "github_editar"
+                  ? (input?.reemplazar || "").slice(0, 3000)
+                  : undefined;
+              const content =
+                tool === "github_guardar"
+                  ? (input?.content || "").slice(0, 3000)
+                  : undefined;
+
+              res.write(
+                JSON.stringify({
+                  type: "confirm",
+                  id: confirmId,
+                  tool,
+                  path: input?.path || "",
+                  commit: input?.message || "",
+                  buscar,
+                  reemplazar,
+                  content,
+                }) + "\n"
+              );
+
+              const approved = await askConfirm(
+                confirmId,
+                tool,
+                input?.path,
+                input?.message,
+                buscar,
+                reemplazar,
+                content
+              );
+
+              if (!approved) {
+                output = `El usuario rechazó el ${tool}. No reintentes sin pedir confirmación nuevamente.`;
+              }
+            }
+
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: tc.id,
+              content: output,
+            });
+
+            res.write(
+              JSON.stringify({
+                type: "tool_result",
+                tool,
+                result: output.slice(0, 500),
+              }) + "\n"
+            );
+          }
+
+          // Agregar resultados al historial (formato OpenAI)
+          history.push({
+            role: "user",
+            content: toolResults.map((tr) => ({
+              type: "tool_result",
+              tool_use_id: tr.tool_use_id,
+              content: tr.content,
+            })),
+          });
+
+          continue; // Siguiente iteración del bucle
+        }
+
+        break; // Si finish_reason no es reconocido, salir
+      }
+
+      await saveConversation(id, clean, fullAnswer, history);
+
+      res.write(JSON.stringify({ type: "done" }) + "\n");
+      res.end();
+    } catch (e) {
+      console.error("Error OpenAI:", e);
+      res.write(JSON.stringify({ type: "error", text: e.message }) + "\n");
+      res.end();
+    }
+  } else if (useAnthropic) {
+    // --- Anthropic (Claude) ---
+    try {
+      let response;
+      let loop = 0;
+
+      const askTool = async (tool, input) => {
+        let output;
+        if (tool === "leer_url") {
+          output = await leerUrl(input?.url);
+          ctx.usedWeb = true;
+        } else {
+          output = await runGithubTool(tool, input, project, ctx);
+        }
+        return output;
+      };
+
+      while (loop < 6) {
+        loop++;
+        const params = {
+          model,
+          messages: history,
+          system: SYSTEM_PROMPT,
+          tools: allTools.length > 0 ? allTools : undefined,
+          ...anthropicParams(),
+        };
+
+        response = await anthropic.messages.create(params);
+
+        if (response.stop_reason === "end_turn") {
+          // Respuesta completa, sin tool calls
+          let answer = "";
+          for (const b of response.content) {
+            if (b.type === "text") {
+              answer += b.text;
+              res.write(JSON.stringify({ type: "text", text: b.text }) + "\n");
+            }
+          }
+          history.push({ role: "assistant", content: answer });
+          break;
+        }
+
+        if (response.stop_reason === "tool_use") {
+          // Hay tool calls
+          let assistantAnswer = "";
+          const toolUseBlocks = [];
+
+          for (const b of response.content) {
+            if (b.type === "text") {
+              assistantAnswer += b.text;
+              res.write(JSON.stringify({ type: "text", text: b.text }) + "\n");
+            } else if (b.type === "tool_use") {
+              toolUseBlocks.push(b);
+            }
+          }
+
+          // Agregar respuesta del asistente al historial (con tool calls)
+          history.push({
+            role: "assistant",
+            content: response.content,
+          });
+
+          // Ejecutar herramientas y agregar resultados
+          const toolResults = [];
+          for (const tb of toolUseBlocks) {
+            const tool = tb.name;
+            const input = tb.input;
+
+            res.write(
+              JSON.stringify({
+                type: "tool",
+                tool,
+                input: JSON.stringify(input).slice(0, 3000),
+              }) + "\n"
+            );
+
+            if (!ctx.askedTools.includes(tool)) {
+              ctx.askedTools.push(tool);
+            }
+
+            let output = await askTool(tool, input);
+
+            // Pedir confirmación si es github_guardar o github_editar
+            if ((tool === "github_guardar" || tool === "github_editar") && canConfirm) {
+              const confirmId = crypto.randomUUID();
+              const buscar =
+                tool === "github_editar"
+                  ? (input?.buscar || "").slice(0, 3000)
+                  : undefined;
+              const reemplazar =
+                tool === "github_editar"
+                  ? (input?.reemplazar || "").slice(0, 3000)
+                  : undefined;
+              const content =
+                tool === "github_guardar"
+                  ? (input?.content || "").slice(0, 3000)
+                  : undefined;
+
+              res.write(
+                JSON.stringify({
+                  type: "confirm",
+                  id: confirmId,
+                  tool,
+                  path: input?.path || "",
+                  commit: input?.message || "",
+                  buscar,
+                  reemplazar,
+                  content,
+                }) + "\n"
+              );
+
+              const approved = await askConfirm(
+                confirmId,
+                tool,
+                input?.path,
+                input?.message,
+                buscar,
+                reemplazar,
+                content
+              );
+
+              if (!approved) {
+                output = `El usuario rechazó el ${tool}. No reintentes sin pedir confirmación nuevamente.`;
+              }
+            }
+
+            toolResults.push({
+              type: "tool_result",
+              tool_use_id: tb.id,
+              content: output,
+            });
+
+            res.write(
+              JSON.stringify({
+                type: "tool_result",
+                tool,
+                result: output.slice(0, 500),
+              }) + "\n"
+            );
+          }
+
+          // Agregar resultados al historial
+          history.push({ role: "user", content: toolResults });
+
+          // Continuar el bucle si no alcanzamos el límite
+          continue;
+        }
+
+        // Otro stop_reason (ej: max_tokens)
+        break;
+      }
+
+      // Guardar conversación
+      const answer = response.content.find((b) => b.type === "text")?.text || "";
+      await saveConversation(id, clean, answer, history);
+
+      res.write(JSON.stringify({ type: "done" }) + "\n");
+      res.end();
+    } catch (e) {
+      console.error("Error Anthropic:", e);
+      res.write(JSON.stringify({ type: "error", text: e.message }) + "\n");
+      res.end();
+    }
+  } else {
+    // Modelo no reconocido
+    res.status(400).json({ error: "Modelo no soportado" });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Servidor escuchando en puerto ${PORT}`);
+});its: el usuario aprueba cada guardar/editar ---
 const pendingConfirms = new Map(); // id -> { done }
 const CONFIRM_TIMEOUT_MS = 2 * 60 * 1000;
 
