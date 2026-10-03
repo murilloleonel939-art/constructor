@@ -30,6 +30,10 @@ if (!process.env.ANTHROPIC_API_KEY) {
   console.error("Falta la variable ANTHROPIC_API_KEY");
   process.exit(1);
 }
+if (!process.env.OPENAI_API_KEY) {
+  console.error("Falta la variable OPENAI_API_KEY");
+  process.exit(1);
+}
 if (!APP_PASSWORD) {
   console.error("Falta la variable APP_PASSWORD");
   process.exit(1);
