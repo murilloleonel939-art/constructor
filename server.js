@@ -10,16 +10,9 @@ import OpenAI from "openai";
 const PORT = Number(process.env.PORT) || 3000;
 const APP_PASSWORD = process.env.APP_PASSWORD;
 const MODEL = process.env.MODEL || "claude-sonnet-5-5";
-// Modelos seleccionables en la interfaz: MODEL (por defecto) + los de MODELS (separados por comas)
-const MODEL_IDS = [
-  ...new Set([
-    MODEL,
-    ...(process.env.MODELS || "claude-haiku-4-5-20251001")
-      .split(",")
-      .map((s) => s.trim())
-      .filter(Boolean),
-  ]),
-];
+// Modelos seleccionables: sonnet + gpt-4-turbo
+const AVAILABLE_MODELS = ["claude-sonnet-5-5", "gpt-4-turbo"];
+const MODEL_IDS = AVAILABLE_MODELS;
 // Configuración propia de cada modelo
 function modelParams(model) {
   // Solo sonnet soporta effort parameter
