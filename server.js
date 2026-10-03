@@ -13,17 +13,12 @@ const MODEL = process.env.MODEL || "claude-sonnet-5-5";
 // Modelos seleccionables: sonnet + gpt-4-turbo
 const AVAILABLE_MODELS = ["claude-sonnet-5-5", "gpt-4-turbo"];
 const MODEL_IDS = AVAILABLE_MODELS;
-// Configuración propia de cada modelo
-function modelParams(model) {
-  // Solo sonnet soporta effort parameter
-  if (model === "claude-sonnet-5-5") {
-    return {
-      max_tokens: 64000,
-      output_config: { effort: "low" },
-    };
-  }
-  // Otros modelos: sin effort, configuración mínima
-  return { max_tokens: 16000 };
+// Parámetros específicos para Anthropic
+function anthropicParams() {
+  return {
+    max_tokens: 64000,
+    output_config: { effort: "low" },
+  };
 }
 
 if (!process.env.ANTHROPIC_API_KEY) {
