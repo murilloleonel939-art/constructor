@@ -18,7 +18,12 @@ App web de chat con Claude, protegida con contraseña, desplegada en Coolify (ht
 - `README.md`: descripción general
 
 ## Configuración (variables de entorno)
-`ANTHROPIC_API_KEY`, `APP_PASSWORD`, `MODEL` (por defecto `claude-sonnet-5-5`; confirmado que es el valor en uso en Coolify), `PORT`, `DATA_DIR` (`/data/conversations`), `PROJECTS_DIR` (`/data/projects`)
+- `ANTHROPIC_API_KEY`: para Claude (Anthropic)
+- `OPENAI_API_KEY`: para GPT-4-turbo (OpenAI) — **nuevo**
+- `APP_PASSWORD`: contraseña de acceso
+- `MODEL`: modelo por defecto (`claude-sonnet-5-5`)
+- `MODELS`: lista adicional de modelos (ej: `gpt-4-turbo`; separadas por comas) — **expandido para OpenAI**
+- `PORT`, `DATA_DIR` (`/data/conversations`), `PROJECTS_DIR` (`/data/projects`)
 
 ## Cómo funciona
 - Login con cookie firmada (HMAC, 7 días) y límite de 10 intentos por IP cada 15 min
