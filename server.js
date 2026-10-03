@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import express from "express";
 import Anthropic from "@anthropic-ai/sdk";
+import OpenAI from "openai";
 
 // --- Configuración (variables de entorno) ---
 const PORT = Number(process.env.PORT) || 3000;
